@@ -52,8 +52,6 @@ export const createSupabaseSyncManager = <
       /**
        * A hook to transform the items after they're pulled from Supabase,
        * before they're applied to the collection.
-       *
-       * Can be used to, for example, remove _deleted and _modified properties.
        */
       afterDownload: (
         changeset: LoadResponse<TRemoteItem>,
@@ -265,7 +263,7 @@ export function executeSelectFromSupabase<TDatabase, TSchemaName extends string 
  * @param array
  */
 function removeSyncProperties<
-  T extends Partial<{ _deleted: unknown, _modified: unknown }>,
+  T extends { _deleted?: unknown, _modified?: unknown },
 >(
   array: T[],
 ) {
@@ -280,13 +278,16 @@ function removeSyncProperties<
  * @param items
  * @param generator
  */
-export function postProcessFullPull<TRemoteItem,
+export function postProcessFullPull<
+  TRemoteItem,
   TParameters extends any[]>(generator: (...parameters: TParameters) => Promise<TRemoteItem[]>) {
   return async (...parameters: TParameters) => {
     const items = await generator(...parameters)
-    removeSyncProperties(
-      items as Partial<{ _deleted: unknown, _modified: unknown }>[],
-    )
+    if (items.every(item => typeof item === 'object' && item !== null && '_deleted' in item && '_modified' in item)) {
+      removeSyncProperties(
+        items,
+      )
+    }
     return { items }
   }
 }
@@ -326,15 +327,15 @@ export function postProcessChangesPull<
   }
 }
 
-interface PushMethods<TRemoteItem> {
+interface PushMethods<TRemoteItem extends { id: unknown }> {
   upsert: (item: TRemoteItem) =>
   Promise<{ error?: unknown }>,
   insert: (item: TRemoteItem) =>
   Promise<{ error?: unknown }>,
   update: (item: Partial<TRemoteItem>,
-    id: string) =>
+    id: TRemoteItem['id']) =>
   Promise<{ error?: unknown }>,
-  remove: (id: string) => Promise<{ error?: unknown }>,
+  remove: (id: TRemoteItem['id']) => Promise<{ error?: unknown }>,
 }
 
 /**
@@ -346,10 +347,10 @@ interface PushMethods<TRemoteItem> {
  * @param root0.remove
  */
 export function createDeletedModifiedTrackingPusher<
-  TRemoteItem extends { id: string, _deleted: boolean, _modified: string }>(
-  { upsert, update }: PushMethods<Omit<TRemoteItem, '_deleted' | '_modified' | 'id'> & { id: string, _deleted: boolean, _modified: string }>,
+  TRemoteItem extends { id: unknown, _deleted: boolean, _modified: string }>(
+  { upsert, update }: PushMethods<Omit<TRemoteItem, '_deleted' | '_modified'> & { _deleted: boolean, _modified: string }>,
 ): ConstructorParameters<typeof SyncManager<any,
- TRemoteItem & { id: string, _deleted: boolean, _modified: string }>>[0]['push'] {
+ TRemoteItem & { _deleted: boolean, _modified: string }>>[0]['push'] {
   return createGenericPusher({
     addedAction: async item => await upsert({
       ...item,
@@ -377,10 +378,10 @@ export function createDeletedModifiedTrackingPusher<
  * @param root0.remove
  */
 export function createSimplePusher<
-  TRemoteItem extends { id: string }>(
+  TRemoteItem extends { id: unknown }>(
   { insert, update, remove }: PushMethods<TRemoteItem>,
 ): ConstructorParameters<typeof SyncManager<any,
- TRemoteItem & { id: string }>>[0]['push'] {
+  TRemoteItem>>[0]['push'] {
   return createGenericPusher({
     addedAction: insert,
     changedAction: update,
@@ -396,14 +397,14 @@ export function createSimplePusher<
  * @param root0.removedAction
  */
 function createGenericPusher<
-  TRemoteItem extends { id: string }>(
+  TRemoteItem extends { id: unknown }>(
   { addedAction, changedAction, removedAction }: {
     addedAction: (item: TRemoteItem) => Promise<{ error?: unknown }>,
-    changedAction: (item: TRemoteItem, id: string) => Promise<{ error?: unknown }>,
+    changedAction: (item: TRemoteItem, id: TRemoteItem['id']) => Promise<{ error?: unknown }>,
     removedAction: (item: TRemoteItem) => Promise<{ error?: unknown }>,
   },
 ): ConstructorParameters<typeof SyncManager<any,
- TRemoteItem & { id: string }>>[0]['push'] {
+  TRemoteItem>>[0]['push'] {
   return async (configuration, { changes }) => {
     await Promise.all([
       ...changes.added.map(async (item) => {
@@ -444,18 +445,18 @@ function createGenericPusher<
  * @param table.delete
  * @param table.remove
  */
-export function createPushMethods<TItem>(table: {
+export function createPushMethods<TItem extends { id: unknown }>(table: {
   upsert: (item: TItem) => PromiseLike<{ error?: unknown }>,
   insert: (item: TItem) => PromiseLike<{ error?: unknown }>,
   update: (item: Partial<TItem>) =>
-  { eq: (field: string, value: string) => PromiseLike<{ error?: unknown }> },
-  delete: () => { eq: (field: string, value: string) => PromiseLike<{ error?: unknown }> },
+  { eq: (field: string, value: any) => PromiseLike<{ error?: unknown }> },
+  delete: () => { eq: (field: string, value: any) => PromiseLike<{ error?: unknown }> },
 }) {
   return {
     upsert: async (item: TItem) => await table.upsert(item),
     insert: async (item: TItem) => await table.insert(item),
-    update: async (item: Partial<TItem>, id: string) => await table.update(item).eq('id', id),
-    remove: async (id: string) => await table.delete().eq('id', id),
+    update: async (item: Partial<TItem>, id: TItem['id']) => await table.update(item).eq('id', id),
+    remove: async (id: TItem['id']) => await table.delete().eq('id', id),
   }
 }
 
