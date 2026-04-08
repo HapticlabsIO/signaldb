@@ -4,16 +4,16 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
 import type SyncManager from '@signaldb/sync/SyncManager'
 import type { TableWithFieldName } from '../src'
-import { baseSelectFromSupabase, createDeletedModifiedTrackingPusher, createPushMethods, createSimplePusher, createSupabaseSyncManager, executeSelectFromSupabase, filterOutDeletedFromSupabase, filterOutUnmodifiedFromSupabase, postProcessChangesPull, postProcessFullPull } from '../src'
+import { createAddLocalId, baseSelectFromSupabase, createDeletedModifiedTrackingPusher, createPushMethods, createSimplePusher, createSupabaseSyncManager, executeSelectFromSupabase, filterOutDeletedFromSupabase, filterOutUnmodifiedFromSupabase, postProcessChangesPull, postProcessFullPull, removeLocalId, createLocalId } from '../src'
 import type { Database } from './supabase'
-import { EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_SUPABASE_URL } from './supabaseSecrets'
+import { EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_SUPABASE_URL, SUPABASE_TESTER_EMAIL, SUPABASE_TESTER_PASSWORD } from './supabaseSecrets'
 
 const supabase = createClient<Database>(
   EXPO_PUBLIC_SUPABASE_URL,
   EXPO_PUBLIC_SUPABASE_ANON_KEY)
 
-type TestRowType = Database['public']['Tables']['members']['Row']
-type LocalTestRowType = Omit<TestRowType, '_modified' | '_deleted'>
+type TestRowType = Omit<Database['public']['Tables']['members']['Row'], '_modified' | '_deleted'>
+type LocalTestRowType = TestRowType & { id: string }
 
 type RealRowType = Database['public']['Tables']['localities']['Row']
 type LocalRealRowType = RealRowType
@@ -53,3 +53,83 @@ it('Typing', { retry: 5 }, async () => {
 
   expect(goodCollection.find().count()).toBeGreaterThanOrEqual(800)
 })
+
+it('sync local -> supabase', async () => {
+  const { data: userData, error: signinError } = await supabase.auth.signInWithPassword({
+    email: SUPABASE_TESTER_EMAIL,
+    password: SUPABASE_TESTER_PASSWORD,
+  })
+
+  if (signinError) {
+    throw signinError
+  }
+
+  const memberCollection: Collection = new Collection<LocalTestRowType>({ name: 'members' })
+
+  const realPull = postProcessFullPull(executeSelectFromSupabase<Database, 'public', 'members'>(baseSelectFromSupabase<Database, 'public', 'members'>(supabase, 'public', 'members')))
+  const realPush = createSimplePusher<TestRowType, LocalTestRowType['id']>({
+    insert: async item => supabase.from('members').insert(item),
+    update: async item => supabase.from('members').update(item).eq('team_id', item.team_id).eq('user_id', item.user_id),
+    upsert: async item => supabase.from('members').upsert(item),
+    remove: async item => supabase.from('members').delete().eq('team_id', item.team_id).eq('user_id', item.user_id),
+  })
+
+  const bruhMoment = createSupabaseSyncManager<LocalTestRowType, LocalTestRowType['id'], TestRowType>(undefined)
+  bruhMoment.addCollection(memberCollection as any, {
+    name: 'members',
+    pull: realPull,
+    push: realPush,
+    beforeUpload: removeLocalId<LocalTestRowType>,
+    afterDownload: createAddLocalId(['team_id', 'user_id']),
+  })
+
+  await bruhMoment.sync('members')
+
+  const initialCount = memberCollection.find().count()
+  expect(initialCount).toBeGreaterThanOrEqual(1)
+
+  const { data: teams, error: teamsError } = await supabase.from('teams').select('id').limit(initialCount + 2)
+  if (teamsError) throw teamsError
+
+  const teamWeAreNotAPartOf = teams.find(
+    team => memberCollection.find({ team_id: team.id, user_id: userData.user.id }).count() === 0)
+
+  if (!teamWeAreNotAPartOf) {
+    throw new Error('Could not find a team we are not a part of, cannot run test')
+  }
+
+  const newMember: LocalTestRowType = {
+    id: createLocalId({ team_id: teamWeAreNotAPartOf.id, user_id: userData.user.id }, ['team_id', 'user_id']),
+    team_id: teamWeAreNotAPartOf.id,
+    user_id: userData.user.id,
+    status: 'member_requested',
+    playing_position: 'Winner',
+    created_at: new Date().toISOString(),
+  }
+
+  expect(memberCollection.insert(newMember)).toBe(newMember.id)
+
+  await new Promise(resolve => setTimeout(resolve, 1000))
+
+  const { data: memberData, error: memberError } = await supabase.from('members').select('*').eq('team_id', newMember.team_id).eq('user_id', newMember.user_id).single()
+
+  if (memberError) {
+    throw memberError
+  }
+
+  expect(memberData).toEqual(expect.objectContaining({
+    team_id: newMember.team_id,
+    user_id: newMember.user_id,
+    status: newMember.status,
+    playing_position: newMember.playing_position,
+  }))
+
+  expect(memberCollection.removeOne({ id: newMember.id })).toBe(1)
+
+  await new Promise(resolve => setTimeout(resolve, 3000))
+
+  const { data: memberData2, error: memberError2 } = await supabase.from('members').select('*').eq('team_id', newMember.team_id).eq('user_id', newMember.user_id).single()
+
+  expect(memberData2).toBeNull()
+  expect(memberError2).not.toBeNull()
+}, 20_000)
