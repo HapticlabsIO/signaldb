@@ -127,47 +127,50 @@ export const createSupabaseSyncManager = <
 
 /**
  *
+ * @param dummyItem
  * @param changes
  * @param onChange
  */
-export function handleTableChanges<TRemoteItem extends { [key: string]: any }>(
-  changes: RealtimePostgresChangesPayload<TRemoteItem>,
-  onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>,
-): void {
-  const newIsDeleted
-    = 'deleted' in changes.new && changes.new?._deleted === true
-  const oldWasDeleted
-    = 'deleted' in changes.old && changes.old?._deleted === true
-  switch (changes.eventType) {
-    case 'INSERT': {
-      void onChange({
-        changes: {
-          added: newIsDeleted ? [] : [changes.new],
-          modified: [],
-          removed: newIsDeleted ? [changes.new] : [],
-        },
-      })
-      break
-    }
-    case 'UPDATE': {
-      void onChange({
-        changes: {
-          modified: !oldWasDeleted && !newIsDeleted ? [changes.new] : [],
-          removed: !oldWasDeleted && newIsDeleted ? [changes.new] : [],
-          added: oldWasDeleted && !newIsDeleted ? [changes.new] : [],
-        },
-      })
-      break
-    }
-    case 'DELETE': {
-      void onChange({
-        changes: {
-          removed: oldWasDeleted ? [] : [changes.old],
-          added: [],
-          modified: [],
-        },
-      })
-      break
+export function createTableChangeHandler<TRemoteItem extends { [key: string]: any }>(
+  dummyItem: TRemoteItem,
+) {
+  return (changes: RealtimePostgresChangesPayload<TRemoteItem>,
+    onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>) => {
+    const newIsDeleted
+      = 'deleted' in changes.new && changes.new?._deleted === true
+    const oldWasDeleted
+      = 'deleted' in changes.old && changes.old?._deleted === true
+    switch (changes.eventType) {
+      case 'INSERT': {
+        void onChange({
+          changes: {
+            added: newIsDeleted ? [] : [changes.new],
+            modified: [],
+            removed: newIsDeleted ? [changes.new] : [],
+          },
+        })
+        break
+      }
+      case 'UPDATE': {
+        void onChange({
+          changes: {
+            modified: !oldWasDeleted && !newIsDeleted ? [changes.new] : [],
+            removed: !oldWasDeleted && newIsDeleted ? [changes.new] : [],
+            added: oldWasDeleted && !newIsDeleted ? [changes.new] : [],
+          },
+        })
+        break
+      }
+      case 'DELETE': {
+        void onChange({
+          changes: {
+            removed: oldWasDeleted ? [] : [{ ...dummyItem, ...changes.old }],
+            added: [],
+            modified: [],
+          },
+        })
+        break
+      }
     }
   }
 }
@@ -177,6 +180,7 @@ export function handleTableChanges<TRemoteItem extends { [key: string]: any }>(
  * @param supabase
  * @param schemaName
  * @param tableName
+ * @param dummyItem
  */
 export function startListeningToTableChanges<
   TRemoteItem extends { [key: string]: any },
@@ -184,9 +188,11 @@ export function startListeningToTableChanges<
   supabase: SupabaseClient,
   schemaName: string,
   tableName: string,
+  dummyItem: TRemoteItem,
 ): (collectionOptions: any,
   onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>)
 => CleanupFunction | Promise<CleanupFunction> {
+  const handler = createTableChangeHandler(dummyItem)
   return (config, onChange) => {
     const channel = supabase
       .channel('room1')
@@ -194,7 +200,7 @@ export function startListeningToTableChanges<
         'postgres_changes',
         { event: '*', schema: schemaName, table: tableName },
         (changes: RealtimePostgresChangesPayload<TRemoteItem>) => {
-          handleTableChanges(changes, onChange)
+          handler(changes, onChange)
         },
       )
       .subscribe()
@@ -378,7 +384,7 @@ function removeSyncProperties<
  * @param items
  * @param generator
  */
-export function postProcessFullPull<TRemoteItem, TParameters extends any[]>(
+export function postProcessFullPull<TRemoteItem, TParameters extends unknown[]>(
   generator: (...parameters: TParameters) => Promise<TRemoteItem[]>,
 ): (
   ...parameters: TParameters

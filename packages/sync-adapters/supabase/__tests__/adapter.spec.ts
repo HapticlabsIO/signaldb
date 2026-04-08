@@ -37,11 +37,11 @@ it('Typing', { retry: 5 }, async () => {
   //   createPushMethods<TestRowType>(table))
 
   const realPull = postProcessFullPull(executeSelectFromSupabase<Database, 'public', 'localities'>(baseSelectFromSupabase<Database, 'public', 'localities'>(supabase, 'public', 'localities')))
-  const realPush = createSimplePusher<RealRowType>(createPushMethods<RealRowType>(supabase.schema('public').from('localities')))
+  const realPush = createSimplePusher<RealRowType, RealRowType['id']>(createPushMethods<RealRowType>(supabase.schema('public').from('localities')))
 
   const bruhMoment = createSupabaseSyncManager(undefined)
   const goodCollection: Collection = new Collection({ name: 'WOW' })
-  bruhMoment.addCollection(goodCollection, {
+  bruhMoment.addCollection(goodCollection as any, {
     name: 'localities',
     pull: realPull,
     push: realPush,
@@ -161,7 +161,13 @@ it('sync supabase -> local', async () => {
     push: realPush,
     beforeUpload: removeLocalId<LocalTestRowType>,
     afterDownload: createAddLocalId(['team_id', 'user_id']),
-    startListening: startListeningToTableChanges(supabase, 'public', 'members')
+    startListening: startListeningToTableChanges(supabase, 'public', 'members', {
+      team_id: '',
+      user_id: '',
+      status: 'member_requested',
+      playing_position: '',
+      created_at: '',
+    }),
   })
 
   await bruhMoment.sync('members')
