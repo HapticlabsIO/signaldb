@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
 import type SyncManager from '@signaldb/sync/SyncManager'
 import type { TableWithFieldName } from '../src'
-import { createAddLocalId, baseSelectFromSupabase, createDeletedModifiedTrackingPusher, createPushMethods, createSimplePusher, createSupabaseSyncManager, executeSelectFromSupabase, filterOutDeletedFromSupabase, filterOutUnmodifiedFromSupabase, postProcessChangesPull, postProcessFullPull, removeLocalId, createLocalId } from '../src'
+import { createAddLocalId, baseSelectFromSupabase, createDeletedModifiedTrackingPusher, createPushMethods, createSimplePusher, createSupabaseSyncManager, executeSelectFromSupabase, filterOutDeletedFromSupabase, filterOutUnmodifiedFromSupabase, postProcessChangesPull, postProcessFullPull, removeLocalId, createLocalId, startListeningToTableChanges } from '../src'
 import type { Database } from './supabase'
 import { EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_SUPABASE_URL, SUPABASE_TESTER_EMAIL, SUPABASE_TESTER_PASSWORD } from './supabaseSecrets'
 
@@ -132,4 +132,86 @@ it('sync local -> supabase', async () => {
 
   expect(memberData2).toBeNull()
   expect(memberError2).not.toBeNull()
+}, 20_000)
+
+it('sync supabase -> local', async () => {
+  const { data: userData, error: signinError } = await supabase.auth.signInWithPassword({
+    email: SUPABASE_TESTER_EMAIL,
+    password: SUPABASE_TESTER_PASSWORD,
+  })
+
+  if (signinError) {
+    throw signinError
+  }
+
+  const memberCollection: Collection = new Collection<LocalTestRowType>({ name: 'members' })
+
+  const realPull = postProcessFullPull(executeSelectFromSupabase<Database, 'public', 'members'>(baseSelectFromSupabase<Database, 'public', 'members'>(supabase, 'public', 'members')))
+  const realPush = createSimplePusher<TestRowType, LocalTestRowType['id']>({
+    insert: async item => supabase.from('members').insert(item),
+    update: async item => supabase.from('members').update(item).eq('team_id', item.team_id).eq('user_id', item.user_id),
+    upsert: async item => supabase.from('members').upsert(item),
+    remove: async item => supabase.from('members').delete().eq('team_id', item.team_id).eq('user_id', item.user_id),
+  })
+
+  const bruhMoment = createSupabaseSyncManager<LocalTestRowType, LocalTestRowType['id'], TestRowType>(undefined)
+  bruhMoment.addCollection(memberCollection as any, {
+    name: 'members',
+    pull: realPull,
+    push: realPush,
+    beforeUpload: removeLocalId<LocalTestRowType>,
+    afterDownload: createAddLocalId(['team_id', 'user_id']),
+    startListening: startListeningToTableChanges(supabase, 'public', 'members')
+  })
+
+  await bruhMoment.sync('members')
+
+  const initialCount = memberCollection.find().count()
+  expect(initialCount).toBeGreaterThanOrEqual(1)
+
+  const { data: teams, error: teamsError } = await supabase.from('teams').select('id').limit(initialCount + 2)
+  if (teamsError) throw teamsError
+
+  const teamWeAreNotAPartOf = teams.find(
+    team => memberCollection.find({ team_id: team.id, user_id: userData.user.id }).count() === 0)
+
+  if (!teamWeAreNotAPartOf) {
+    throw new Error('Could not find a team we are not a part of, cannot run test')
+  }
+
+  const newMemberId = createLocalId({ team_id: teamWeAreNotAPartOf.id, user_id: userData.user.id }, ['team_id', 'user_id'])
+  const newMember: TestRowType = {
+    team_id: teamWeAreNotAPartOf.id,
+    user_id: userData.user.id,
+    status: 'member_requested',
+    playing_position: 'Winner',
+    created_at: new Date().toISOString(),
+  }
+
+  const { data: memberData, error: memberError } = await supabase.from('members').insert(newMember)
+
+  if (memberError) {
+    throw memberError
+  }
+
+  await new Promise(resolve => setTimeout(resolve, 5000))
+
+  const localMember = memberCollection.findOne({ id: newMemberId })
+  expect(localMember).toEqual(expect.objectContaining({
+    team_id: newMember.team_id,
+    user_id: newMember.user_id,
+    status: newMember.status,
+    playing_position: newMember.playing_position,
+  }))
+
+  const { error: deleteError } = await supabase.from('members').delete().eq('team_id', newMember.team_id).eq('user_id', newMember.user_id)
+
+  if (deleteError) {
+    throw deleteError
+  }
+
+  await new Promise(resolve => setTimeout(resolve, 5000))
+
+  const deletedLocalMember = memberCollection.findOne({ id: newMemberId })
+  expect(deletedLocalMember).toBeUndefined()
 }, 20_000)

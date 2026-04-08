@@ -179,14 +179,14 @@ export function handleTableChanges<TRemoteItem extends { [key: string]: any }>(
  * @param tableName
  */
 export function startListeningToTableChanges<
-  TRemoteItem extends { [key: string]: any } & BaseItem,
+  TRemoteItem extends { [key: string]: any },
 >(
   supabase: SupabaseClient,
   schemaName: string,
   tableName: string,
-): ConstructorParameters<
-  typeof SyncManager<any, TRemoteItem>
->[0]['registerRemoteChange'] {
+): (collectionOptions: any,
+  onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>)
+=> CleanupFunction | Promise<CleanupFunction> {
   return (config, onChange) => {
     const channel = supabase
       .channel('room1')
