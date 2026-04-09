@@ -23,7 +23,7 @@ export const createSupabaseViewSyncManager = <
     id: identifier,
     onError: (options, error) => {
       // eslint-disable-next-line no-console
-      console.error(options, error)
+      console.error('SyncManager error', options, error)
     },
     persistenceAdapter,
     async pull() {
@@ -100,7 +100,7 @@ export const createSupabaseSyncManager = <
     id: 'supabase-sync-manager',
     onError: (options, error) => {
       // eslint-disable-next-line no-console
-      console.error(options, error)
+      console.error('SyncManager error', options, error)
     },
     persistenceAdapter,
     async registerRemoteChange(configuration, onChange) {
@@ -131,11 +131,13 @@ export const createSupabaseSyncManager = <
  * @param changes
  * @param onChange
  */
-export function createTableChangeHandler<TRemoteItem extends { [key: string]: any }>(
-  dummyItem: TRemoteItem,
-) {
-  return (changes: RealtimePostgresChangesPayload<TRemoteItem>,
-    onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>) => {
+export function createTableChangeHandler<
+  TRemoteItem extends { [key: string]: any },
+>(dummyItem: TRemoteItem) {
+  return (
+    changes: RealtimePostgresChangesPayload<TRemoteItem>,
+    onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>,
+  ) => {
     const newIsDeleted
       = 'deleted' in changes.new && changes.new?._deleted === true
     const oldWasDeleted
@@ -189,9 +191,10 @@ export function startListeningToTableChanges<
   schemaName: string,
   tableName: string,
   dummyItem: TRemoteItem,
-): (collectionOptions: any,
-  onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>)
-=> CleanupFunction | Promise<CleanupFunction> {
+): (
+  collectionOptions: any,
+  onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>,
+) => CleanupFunction | Promise<CleanupFunction> {
   const handler = createTableChangeHandler(dummyItem)
   return (config, onChange) => {
     const channel = supabase
@@ -638,32 +641,419 @@ export async function removeLocalId<TLocalItem extends { id: unknown }>(
   }
 }
 
-export const createLocalId = <TRemoteItem>(item: TRemoteItem, fields: (keyof TRemoteItem)[]) =>
-  fields.map(field => `${String(item[field])}`.replaceAll('|', String.raw`\|`)).join('||')
+export const createLocalId = <TRemoteItem>(
+  item: TRemoteItem,
+  fields: (keyof TRemoteItem)[],
+) =>
+  fields
+    .map(field => `${String(item[field])}`.replaceAll('|', String.raw`\|`))
+    .join('||')
 /**
  *
  * @param fields
  */
 export function createAddLocalId<TRemoteItem>(
   fields: (keyof TRemoteItem)[],
-): (remoteItems: LoadResponse<TRemoteItem>)
-=> Promise<LoadResponse<TRemoteItem & { id: string }>> {
-  const addIds = (item: TRemoteItem[]) => item.map(itemWithoutId => ({
-    ...itemWithoutId,
-    id: createLocalId(itemWithoutId, fields) }
-  ))
+): (
+  remoteItems: LoadResponse<TRemoteItem>,
+) => Promise<LoadResponse<TRemoteItem & { id: string }>> {
+  const addIds = (item: TRemoteItem[]) =>
+    item.map(itemWithoutId => ({
+      ...itemWithoutId,
+      id: createLocalId(itemWithoutId, fields),
+    }))
 
-  return async remoteItems => remoteItems.items
-    ? {
-      items: addIds(remoteItems.items),
+  return async remoteItems =>
+    remoteItems.items
+      ? {
+        items: addIds(remoteItems.items),
+      }
+      : {
+        changes: {
+          added: addIds(remoteItems.changes.added),
+          modified: addIds(remoteItems.changes.modified),
+          removed: addIds(remoteItems.changes.removed),
+        },
+      }
+}
+
+/**
+ *
+ * @param map
+ * @param key
+ * @param value
+ */
+function addToMapOfSets<K, V>(map: Map<K, Set<V>>, key: K, value: V | V[] | Set<V>) {
+  let set = map.get(key)
+  if (!set) {
+    set = new Set<V>()
+    map.set(key, set)
+  }
+  if (Array.isArray(value) || value instanceof Set) {
+    value.forEach(v => set.add(v))
+  } else {
+    set.add(value)
+  }
+}
+
+const LOCAL_PATH_COLUMN_NAME = '_localPath'
+type LocalPathColumnName = typeof LOCAL_PATH_COLUMN_NAME
+
+export type LocalDirectoryForWrite = {
+  save: (fileName: string, data: ArrayBuffer) => Promise<void>,
+  exists: (fileName: string) => Promise<boolean>,
+  listDirectory: () => Promise<string[]>,
+  remove: (fileName: string) => Promise<void>,
+}
+
+export type LocalDirectoryForRead = {
+  load: (fileName: string) => Promise<ArrayBuffer>,
+}
+
+/**
+ *
+ * @param bucketName
+ * @param columnName
+ * @param supabase
+ * @param getLocalReferences
+ * @param getLocalPath
+ * @param localDirectory
+ */
+export function createPullFiles<
+  TPathColumn extends string,
+  TIdType,
+  TRemoteItem extends {
+    [key in TPathColumn]: string | null;
+  } & BaseItem<TIdType>,
+>(
+  bucketName: string,
+  columnName: TPathColumn,
+  supabase: SupabaseClient,
+  getLocalReferences: (path: string) => Set<TIdType>,
+  getLocalPath: (id: TIdType) => string | null,
+  localDirectory: LocalDirectoryForWrite,
+): (
+  remoteItems: LoadResponse<TRemoteItem>,
+) => Promise<LoadResponse<TRemoteItem & { [LOCAL_PATH_COLUMN_NAME]: string | null }>> {
+  return async (remoteItems) => {
+    const downloadFile = async (item: TRemoteItem) => {
+      const path = item[columnName]
+      if (path) {
+        // Avoid re-downloading files are already present locally
+        if (await localDirectory.exists(path)) {
+          return path
+        }
+        const { data, error } = await supabase.storage
+          .from(bucketName)
+          .download(path)
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error('Error downloading file from Supabase', error)
+          return null
+        }
+        const arrayBuffer = await data.arrayBuffer()
+        await localDirectory.save(path, arrayBuffer)
+        return path
+      }
+      return null
     }
-    : {
+
+    const downloadAndConstructLocalItem = async (item: TRemoteItem) => {
+      return { ...item, [LOCAL_PATH_COLUMN_NAME]: await downloadFile(item) }
+    }
+
+    const getAllPaths: (items: TRemoteItem[]) => Set<string> = items =>
+      new Set(
+        items.map(item => item[columnName]).filter(path => path !== null),
+      )
+
+    if (remoteItems.items) {
+      // Diff local directory with remote items
+      const localPaths = await localDirectory.listDirectory()
+      const remotePaths: Set<string> = getAllPaths(remoteItems.items)
+
+      // Delete local files that are not present remotely anymore
+      const pathsToDelete = localPaths.filter(
+        localPath => !remotePaths.has(localPath),
+      )
+
+      const deletePromises = pathsToDelete.map(
+        localDirectory.remove.bind(localDirectory),
+      )
+      const addPromises = remoteItems.items.map(downloadAndConstructLocalItem)
+
+      const [, items] = await Promise.all([
+        Promise.all(deletePromises),
+        Promise.all(addPromises),
+      ])
+
+      return {
+        items,
+      }
+    } else {
+      // Find added / deleted paths
+      const explicitlyDeletedPaths = getAllPaths(remoteItems.changes.removed)
+      const explicitlyAddedPaths = getAllPaths(remoteItems.changes.added)
+      const modifiedPreviousPaths = new Set(
+        remoteItems.changes.modified
+          .map(item => getLocalPath(item.id))
+          .filter(path => path != null),
+      )
+      const modifiedNewPaths = getAllPaths(remoteItems.changes.modified)
+
+      const allAddedPaths = explicitlyAddedPaths.union(modifiedNewPaths)
+      const allDeletedPaths = explicitlyDeletedPaths.union(
+        modifiedPreviousPaths,
+      )
+
+      // Paths that we know for sure are present locally after applyig the changes
+      const securedPathsAfterChanges = allAddedPaths
+
+      // Paths that might have been removed locally
+      const potentiallyDeletedPaths = allDeletedPaths.difference(
+        securedPathsAfterChanges,
+      )
+      const trulyDeletedPaths = new Set<string>()
+
+      // Find references to potentially deleted paths
+      const potentiallyDeletedPathsWithPreviousReferences = new Map<
+        string,
+        Set<TIdType>
+      >()
+      potentiallyDeletedPaths.forEach((path) => {
+        if (path) {
+          addToMapOfSets(
+            potentiallyDeletedPathsWithPreviousReferences, path, getLocalReferences(path))
+        }
+      })
+
+      // Analyze whether all references get invalidated with the changes
+      potentiallyDeletedPathsWithPreviousReferences.forEach(
+        (previousReferences, path) => {
+          const explicitlyDeletedReferences = new Set(
+            remoteItems.changes.removed
+              .filter(item => item[columnName] === path)
+              .map(item => item.id),
+          )
+          const modifiedAwayReferences = new Set(
+            remoteItems.changes.modified
+              .map(item => (getLocalPath(item.id) === path ? item.id : null))
+              .filter(id => id !== null),
+          )
+
+          const remainingReferences = previousReferences.difference(
+            explicitlyDeletedReferences.union(modifiedAwayReferences),
+          )
+
+          if (remainingReferences.size === 0) {
+            // If no references remain, we can remove the file locally
+            trulyDeletedPaths.add(path)
+          }
+        },
+      )
+
+      const [, updatedAdded, updatedModified, updatedRemoved]
+        = await Promise.all([
+          Promise.all(
+            [...trulyDeletedPaths].map(
+              localDirectory.remove.bind(localDirectory),
+            ),
+          ),
+          Promise.all(
+            remoteItems.changes.added.map(downloadAndConstructLocalItem),
+          ),
+          Promise.all(
+            remoteItems.changes.modified.map(downloadAndConstructLocalItem),
+          ),
+          Promise.all(
+            remoteItems.changes.removed.map(async (item) => {
+              const localPath = getLocalPath(item.id)
+              return { ...item, [LOCAL_PATH_COLUMN_NAME]: localPath }
+            }),
+          ),
+        ])
+
+      return {
+        changes: {
+          added: updatedAdded,
+          modified: updatedModified,
+          removed: updatedRemoved,
+        },
+      }
+    }
+  }
+}
+
+/**
+ *
+ * @param bucketName
+ * @param remoteColumnName
+ * @param supabase
+ * @param getLocalReferences
+ * @param localDirectory
+ * @param localDirectory.load
+ */
+export function createPushFiles<
+  TPathColumn extends Exclude<string, LocalPathColumnName>,
+  TIdType,
+  TRemoteItem,
+>(
+  bucketName: string,
+  remoteColumnName: TPathColumn,
+  supabase: SupabaseClient,
+  getLocalReferences: (path: string) => Set<TIdType>,
+  localDirectory: LocalDirectoryForRead,
+): (
+  changeset: Parameters<
+    ConstructorParameters<
+      typeof SyncManager<any,
+      Omit<TRemoteItem, TPathColumn> & { [key in TPathColumn]: string | null } & {
+        [LOCAL_PATH_COLUMN_NAME]: string | null,
+      } & BaseItem<TIdType>, TIdType>
+    >[0]['push']
+  >[1],
+) => Promise<PushSecondParameter<
+  Omit<TRemoteItem, TPathColumn>
+  & { [key in TPathColumn]: string | null } & BaseItem<TIdType>, TIdType>> {
+  return async ({ changes, rawChanges }) => {
+    // Files that have not been referenced before the changes, but are referenced after the changes
+    const filesToUpload = new Set<string>()
+
+    // Files that are no longer referenced after the changes
+    const filesToDelete = new Set<string>()
+
+    const getAllLocalPaths: (items: (Omit<TRemoteItem, TPathColumn> & {
+      [LOCAL_PATH_COLUMN_NAME]: string | null,
+    })[]) => Set<string> = items =>
+      new Set(
+        items.map(item => item[LOCAL_PATH_COLUMN_NAME]).filter(path => path !== null),
+      )
+
+    const fileModifiedItems = changes.modified
+      .filter(item => changes.modifiedFields.get(item.id)?.includes(LOCAL_PATH_COLUMN_NAME))
+
+    // Find added / deleted paths
+    const explicitlyDeletedPaths = getAllLocalPaths(changes.removed)
+    const explicitlyAddedPaths = getAllLocalPaths(changes.added)
+    const modifiedPreviousPaths = new Set(
+      fileModifiedItems
+        // The remote column should be untouched
+        .map(item => item[remoteColumnName]),
+    )
+    const modifiedNewPaths = getAllLocalPaths(
+      fileModifiedItems,
+    )
+
+    // All paths that have been added in this changeset, with their references
+    const allUpdatedPathsWithReferences = new Map<string, Set<TIdType>>()
+    fileModifiedItems.forEach((item) => {
+      addToMapOfSets(
+        allUpdatedPathsWithReferences,
+        item[LOCAL_PATH_COLUMN_NAME],
+        item.id,
+      )
+    })
+    changes.added.forEach((item) => {
+      addToMapOfSets(
+        allUpdatedPathsWithReferences,
+        item[LOCAL_PATH_COLUMN_NAME],
+        item.id,
+      )
+    })
+
+    const allUpdatedPaths = explicitlyAddedPaths.union(modifiedNewPaths)
+    const allOutdatedPaths = explicitlyDeletedPaths.union(
+      modifiedPreviousPaths,
+    )
+
+    // Paths that we know for sure are present locally after applying the changes
+    const securedPathsAfterChanges = allUpdatedPaths
+
+    // Paths that might have been removed locally
+    const potentiallyDeletedPaths = allOutdatedPaths.difference(
+      securedPathsAfterChanges,
+    )
+
+    potentiallyDeletedPaths.forEach(
+      // If it's not referenced anymore at all after the changes, we can delete it
+      path => getLocalReferences(path).size === 0 && filesToDelete.add(path))
+
+    allUpdatedPathsWithReferences.forEach((newReferences, path) => {
+      const referencesAfterChanges = getLocalReferences(path)
+
+      // If all references to the path are new, it is a new file that needs to be uploaded
+      if (referencesAfterChanges.size > 0
+        && referencesAfterChanges.isSubsetOf(newReferences)) {
+        filesToUpload.add(path)
+      }
+    })
+
+    const uploadPromises = [...filesToUpload].map(async (path) => {
+      const data = await localDirectory.load(path)
+      const { error } = await supabase.storage
+        .from(bucketName)
+        .upload(path, data, { upsert: true })
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error uploading file to Supabase', error)
+      }
+    })
+    const deletePromises = [...filesToDelete].map(async (path) => {
+      const { error } = await supabase.storage
+        .from(bucketName)
+        .remove([path])
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error deleting file from Supabase', error)
+      }
+    })
+
+    await Promise.all([...uploadPromises, ...deletePromises])
+
+    const movePathsFromLocalToRemote = (items: typeof changes.added): (
+      Omit<TRemoteItem, TPathColumn>
+      & { [key in TPathColumn]: string | null } & BaseItem<TIdType>)[] => {
+      return items.map(
+        (item) => {
+          const result: Omit<TRemoteItem, TPathColumn>
+            & { [key in TPathColumn]: string | null } & BaseItem<TIdType>
+              = { ...item, [remoteColumnName]: item[LOCAL_PATH_COLUMN_NAME] }
+          delete result[LOCAL_PATH_COLUMN_NAME]
+          return result
+        },
+      )
+    }
+
+    const pathMovedModifiedFields = new Map<TIdType, string[]>()
+    for (const [id, modifiedFields] of changes.modifiedFields.entries()) {
+      // Replace changes to the local path column with changes to the remote column
+      pathMovedModifiedFields.set(id, modifiedFields.map(
+        field => field === LOCAL_PATH_COLUMN_NAME ? remoteColumnName : field))
+    }
+
+    return {
       changes: {
-        added: addIds(remoteItems.changes.added),
-        modified: addIds(remoteItems.changes.modified),
-        removed: addIds(remoteItems.changes.removed),
+        added: movePathsFromLocalToRemote(changes.added),
+        modified: movePathsFromLocalToRemote(changes.modified),
+        removed: movePathsFromLocalToRemote(changes.removed),
+        modifiedFields: pathMovedModifiedFields,
       },
+      rawChanges: rawChanges.map((rawChange) => {
+        if (rawChange.type === 'insert') {
+          const { [LOCAL_PATH_COLUMN_NAME]: localPath, ...restData } = rawChange.data
+          return {
+            ...rawChange,
+            data: {
+              ...restData,
+              [remoteColumnName]: localPath,
+            },
+          }
+        } else {
+          return rawChange
+        }
+      }),
     }
+  }
 }
 
 // class SupabaseSyncManager {
