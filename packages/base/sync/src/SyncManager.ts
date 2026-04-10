@@ -187,10 +187,29 @@ export default class SyncManager<
     return this.syncQueues.get(name) as PromiseQueue
   }
 
+  public getPendingLocalChanges(name: string, until: number = Date.now()) {
+    return this.changes.find({
+      collectionName: name,
+      time: { $lte: until },
+    }, {
+      sort: { time: 1 },
+      reactive: false,
+    })
+  }
+
   /**
    * Clears all internal data structures
    */
   public async dispose() {
+    const collectionCleanups: Promise<void>[] = []
+    this.collections.forEach(({ cleanupFunction }) => {
+      if (typeof cleanupFunction === 'function') {
+        const cleanupResult = cleanupFunction()
+        collectionCleanups.push(
+          cleanupResult instanceof Promise ? cleanupResult : Promise.resolve(),
+        )
+      }
+    })
     this.collections.clear()
     this.syncQueues.clear()
     this.remoteChanges.splice(0)
@@ -507,16 +526,8 @@ export default class SyncManager<
         sort: { end: -1 },
         reactive: false,
       })
-      if (options?.onlyWithChanges) {
-        const currentChanges = this.changes.find({
-          collectionName: name,
-          time: { $lte: syncTime },
-        }, {
-          sort: { time: 1 },
-          reactive: false,
-        }).count()
-        if (currentChanges === 0) return
-      }
+
+      if (options?.onlyWithChanges && this.getPendingLocalChanges(name).count() === 0) return
 
       if (!hasActiveSyncs) {
         syncId = this.syncOperations.insert({

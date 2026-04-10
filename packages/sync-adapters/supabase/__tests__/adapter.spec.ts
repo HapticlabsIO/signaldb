@@ -189,7 +189,7 @@ it('sync supabase -> local', async () => {
 }, 20_000)
 
 describe('sync with files', () => {
-  const userCollection = new Collection<LocalUserRow>({ name: 'users' })
+  let userCollection: Collection<LocalUserRow>
   const realPull = postProcessFullPull(executeSelectFromSupabase<Database, 'public', 'users'>(baseSelectFromSupabase<Database, 'public', 'users'>(supabase, 'public', 'users')))
   const realPush = createSimplePusher<UserRowType, LocalUserRow['id']>(createPushMethods<UserRowType>(supabase.schema('public').from('users')))
 
@@ -248,6 +248,7 @@ describe('sync with files', () => {
   })
 
   beforeEach(async () => {
+    userCollection = new Collection<LocalUserRow>({ name: 'users' })
     temporaryDirectory = await fsp.mkdtemp(path.join(tmpdir(), 'WOWO'))
 
     supabaseSyncer = createSupabaseSyncManager<LocalUserRow, LocalUserRow['id'], UserRowType>(undefined)
@@ -260,9 +261,25 @@ describe('sync with files', () => {
         (filePath: string) =>
           new Set(userCollection.find({ _localPath: filePath }).fetch().map(item => item.id)),
         localDirectoryForRead,
+        (fileName) => {
+          const extension = fileName.split('.').pop()
+          switch (extension) {
+            case 'png': {
+              return 'image/png'
+            }
+            case 'jpg':
+            case 'jpeg': {
+              return 'image/jpeg'
+            }
+            default: {
+              return 'text/plain'
+            }
+          }
+        },
       ),
       afterDownload: createPullFiles<'profile_picture_path', LocalUserRow['id'], UserRowType>(
         'profile_picture', 'profile_picture_path', supabase,
+        () => supabaseSyncer.getPendingLocalChanges('users').fetch(),
         (filePath: string) =>
           new Set(userCollection.find({ _localPath: filePath }).fetch().map(item => item.id)),
         (id: LocalUserRow['id']) => {
@@ -285,6 +302,7 @@ describe('sync with files', () => {
   afterEach(async () => {
     temporaryDirectory = ''
     await supabaseSyncer.dispose()
+    await userCollection.dispose()
   })
 
   afterAll(async () => {
@@ -423,7 +441,18 @@ describe('sync with files', () => {
     // Ensure that the file got deleted
     await expect(localDirectoryForWrite.exists(uploadData.path)).resolves.toBe(false)
 
-    await fsp.rm(temporaryDirectory, { recursive: true, force: true })
+    // Create the user again without a profile picture
+    const { error: insertError2 } = await supabase.from('users').insert({
+      id: userData.user.id,
+      name: 'Tester',
+      profile_picture_path: null,
+      username: 'tester',
+    })
+    if (insertError2) {
+      throw insertError2
+    }
+
+    await supabaseSyncer.sync('users')
   }, 120_000)
 
   it('sync local -> supabase with files', async () => {
@@ -501,8 +530,8 @@ describe('sync with files', () => {
     }))
 
     // Ensure that the file got deleted from Supabase storage
-    const { error: downloadError2 } = await supabase.storage.from('profile_picture').download(targetFilename)
-    expect(downloadError2).not.toBeNull()
+    const { data: existenceData2 } = await supabase.storage.from('profile_picture').exists(targetFilename)
+    expect(existenceData2).toBe(false)
 
     // Recreate the local file
     await localDirectoryForWrite.save(targetFilename,
@@ -546,7 +575,27 @@ describe('sync with files', () => {
     expect (memberError5?.code).toBe('PGRST116') // no rows found
 
     // Ensure that the file got deleted from Supabase storage
-    const { error: downloadError4 } = await supabase.storage.from('profile_picture').download(targetFilename)
-    expect(downloadError4).not.toBeNull()
+    const { data: existenceData3 } = await supabase.storage.from('profile_picture').exists(targetFilename)
+    expect(existenceData3).toBe(false)
+
+    // Ensure that the user is present in Supabase for other tests
+    expect(userCollection.insert({
+      ...newLocalUser,
+      _localPath: null,
+    })).toBe(newLocalUser.id)
+    await supabaseSyncer.sync('users')
+
+    const { data: memberData6, error: memberError6 } = await supabase.from('users').select('*').eq('id', userData.user.id).single()
+
+    if (memberError6) {
+      throw memberError6
+    }
+
+    expect(memberData6).toEqual(expect.objectContaining({
+      id: newLocalUser.id,
+      name: newLocalUser.name,
+      profile_picture_path: null,
+      username: newLocalUser.username,
+    }))
   }, 120_000)
 })

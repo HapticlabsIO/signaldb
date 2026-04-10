@@ -1,4 +1,4 @@
-import { SyncManager } from '@signaldb/sync'
+import { SyncManager, applyChanges } from '@signaldb/sync'
 import type { BaseItem, Changeset, LoadResponse } from '@signaldb/core/index'
 import type {
   RealtimePostgresChangesPayload,
@@ -198,7 +198,7 @@ export function startListeningToTableChanges<
   const handler = createTableChangeHandler(dummyItem)
   return (config, onChange) => {
     const channel = supabase
-      .channel('room1')
+      .channel(`signaldb_listening_${schemaName}_${tableName}`)
       .on(
         'postgres_changes',
         { event: '*', schema: schemaName, table: tableName },
@@ -715,6 +715,7 @@ export type LocalDirectoryForRead = {
  * @param bucketName
  * @param columnName
  * @param supabase
+ * @param getPendingLocalChanges
  * @param getLocalReferences
  * @param getLocalPath
  * @param localDirectory
@@ -729,6 +730,8 @@ export function createPullFiles<
   bucketName: string,
   columnName: TPathColumn,
   supabase: SupabaseClient,
+  getPendingLocalChanges: () => Change<TRemoteItem & { [LOCAL_PATH_COLUMN_NAME]: string | null },
+    TIdType>[],
   getLocalReferences: (path: string) => Set<TIdType>,
   getLocalPath: (id: TIdType) => string | null,
   localDirectory: LocalDirectoryForWrite,
@@ -769,12 +772,23 @@ export function createPullFiles<
 
     if (remoteItems.items) {
       // Diff local directory with remote items
-      const localPaths = await localDirectory.listDirectory()
-      const remotePaths: Set<string> = getAllPaths(remoteItems.items)
+      const savedPaths = await localDirectory.listDirectory()
+
+      const pendingLocalChanges = getPendingLocalChanges()
+      const stateAfterChanges = applyChanges<
+        TRemoteItem & { [LOCAL_PATH_COLUMN_NAME]: string | null }, TIdType>(
+        remoteItems.items.map(item => ({ ...item, [LOCAL_PATH_COLUMN_NAME]: item[columnName] })),
+        pendingLocalChanges)
+      const allReferencedPathsAfterChanges: string[]
+        = stateAfterChanges.map(item => item[LOCAL_PATH_COLUMN_NAME])
+          .filter(path => path !== null)
+      const referencedPathsAfterChangesSet = new Set(
+        allReferencedPathsAfterChanges,
+      )
 
       // Delete local files that are not present remotely anymore
-      const pathsToDelete = localPaths.filter(
-        localPath => !remotePaths.has(localPath),
+      const pathsToDelete = savedPaths.filter(
+        localPath => !referencedPathsAfterChangesSet.has(localPath),
       )
 
       const deletePromises = pathsToDelete.map(
@@ -892,6 +906,7 @@ export function createPullFiles<
  * @param getLocalReferences
  * @param localDirectory
  * @param localDirectory.load
+ * @param getMimeType
  */
 export function createPushFiles<
   TPathColumn extends Exclude<string, LocalPathColumnName>,
@@ -903,6 +918,7 @@ export function createPushFiles<
   supabase: SupabaseClient,
   getLocalReferences: (path: string) => Set<TIdType>,
   localDirectory: LocalDirectoryForRead,
+  getMimeType?: (path: string) => string,
 ): (
   changeset: Parameters<
     ConstructorParameters<
@@ -992,7 +1008,7 @@ export function createPushFiles<
       const data = await localDirectory.load(path)
       const { error } = await supabase.storage
         .from(bucketName)
-        .upload(path, data, { upsert: true })
+        .upload(path, data, { ...(getMimeType ? { contentType: getMimeType(path) } : {}) })
       if (error) {
         // eslint-disable-next-line no-console
         console.error('Error uploading file to Supabase', error)
