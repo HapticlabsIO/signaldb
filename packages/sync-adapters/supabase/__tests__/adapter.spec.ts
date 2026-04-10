@@ -30,7 +30,7 @@ it('sync local -> supabase', async () => {
     throw signinError
   }
 
-  const memberCollection: Collection = new Collection<LocalTestRowType>({ name: 'members' })
+  const memberCollection = new Collection<LocalTestRowType, LocalTestRowType['id']>({ name: 'members' })
 
   const realPull = postProcessFullPull(executeSelectFromSupabase<Database, 'public', 'members'>(baseSelectFromSupabase<Database, 'public', 'members'>(supabase, 'public', 'members')))
   const realPush = createSimplePusher<TestRowType, LocalTestRowType['id']>({
@@ -41,7 +41,7 @@ it('sync local -> supabase', async () => {
   })
 
   const bruhMoment = createSupabaseSyncManager<LocalTestRowType, LocalTestRowType['id'], TestRowType>(undefined)
-  bruhMoment.addCollection(memberCollection as any, {
+  bruhMoment.addCollection(memberCollection, {
     name: 'members',
     pull: realPull,
     push: realPush,
@@ -121,7 +121,7 @@ it('sync supabase -> local', async () => {
   })
 
   const bruhMoment = createSupabaseSyncManager<LocalTestRowType, LocalTestRowType['id'], TestRowType>(undefined)
-  bruhMoment.addCollection(memberCollection as any, {
+  bruhMoment.addCollection(memberCollection, {
     name: 'members',
     pull: realPull,
     push: realPush,
@@ -252,7 +252,7 @@ describe('sync with files', () => {
     temporaryDirectory = await fsp.mkdtemp(path.join(tmpdir(), 'WOWO'))
 
     supabaseSyncer = createSupabaseSyncManager<LocalUserRow, LocalUserRow['id'], UserRowType>(undefined)
-    supabaseSyncer.addCollection(userCollection as any, {
+    supabaseSyncer.addCollection(userCollection, {
       name: 'users',
       pull: realPull,
       push: realPush,
