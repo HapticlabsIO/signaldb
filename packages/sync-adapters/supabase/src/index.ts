@@ -53,16 +53,10 @@ export const createSupabaseSyncManager = <
     },
     persistenceAdapter,
     async registerRemoteChange(configuration, onChange) {
-      return await configuration.startListening?.(
-        configuration,
-        onChange,
-      )
+      return await configuration.startListening?.(configuration, onChange)
     },
     async pull(configuration, lastPullTiming) {
-      return await configuration.pull(
-        configuration,
-        lastPullTiming,
-      )
+      return await configuration.pull(configuration, lastPullTiming)
     },
     async push(configuration, allChanges) {
       await configuration.incrementalPush(configuration, allChanges)
@@ -83,9 +77,13 @@ export function createTableChangeHandler<
     onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>,
   ) => {
     const newIsDeleted
-      = 'deleted' in changes.new && changes.new?._deleted === true
+      = changes.new != null
+        && '_deleted' in changes.new
+        && changes.new?._deleted === true
     const oldWasDeleted
-      = 'deleted' in changes.old && changes.old?._deleted === true
+      = changes.old != null
+        && '_deleted' in changes.old
+        && changes.old?._deleted === true
     switch (changes.eventType) {
       case 'INSERT': {
         void onChange({
@@ -383,6 +381,29 @@ export function postProcessChangesPull<
   }
 }
 
+export class DynamicPuller<TPullFunction extends (...args: any[]) => unknown> {
+  private fullPull: TPullFunction
+  private incrementalPull: TPullFunction
+
+  public remainingFullPulls = 1
+
+  public constructor(fullPull: TPullFunction, incrementalPull: TPullFunction) {
+    this.fullPull = fullPull
+    this.incrementalPull = incrementalPull
+  }
+
+  public createPullFunction() {
+    return (...parameters: Parameters<TPullFunction>) => {
+      if (this.remainingFullPulls > 0) {
+        this.remainingFullPulls -= 1
+        return this.fullPull(...parameters)
+      } else {
+        return this.incrementalPull(...parameters)
+      }
+    }
+  }
+}
+
 interface PushMethods<TRemoteItem> {
   upsert: (item: TRemoteItem) => Promise<{ error?: unknown }>,
   insert: (item: TRemoteItem) => Promise<{ error?: unknown }>,
@@ -408,28 +429,50 @@ export function createDeletedModifiedTrackingPusher<
     _deleted: boolean,
     _modified: string,
   }
->): ConstructorParameters<
-  typeof SyncManager<
-    any,
-    TRemoteItem & { id: unknown, _deleted: boolean, _modified: string }
-  >
->[0]['push'] {
+>): (
+  collectionOptions: any,
+  pushParameters: PushSecondParameter<
+    Omit<TRemoteItem, '_deleted' | '_modified'>,
+    unknown
+  >,
+) => Promise<void> {
   return createGenericPusher({
     addedAction: async item =>
       await upsert({
         ...item,
         _deleted: false,
         _modified: new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error('Insert error', error, item)
+        }
+        return { error }
       }),
     changedAction: async (item) => {
-      item._modified = new Date().toISOString()
-      return await update(item)
+      return await update({
+        ...item,
+        _modified: new Date().toISOString(),
+        _deleted: false,
+      }).then(({ error }) => {
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error('Update error', error, item)
+        }
+        return { error }
+      })
     },
     removedAction: async item =>
       await update({
         ...item,
         _deleted: true,
         _modified: new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error('Remove error', error, item)
+        }
+        return { error }
       }),
   })
 }
@@ -541,8 +584,12 @@ export function createPushMethods<TItem extends { id: unknown }>(table: {
 export function createRemoveLocalId<TLocalItem extends { id: unknown }>(
   pusher: (
     collectionOptions: any,
-    pushParameters: PushSecondParameter<Omit<TLocalItem, 'id'>, TLocalItem['id']>,
-  ) => Promise<void>): (
+    pushParameters: PushSecondParameter<
+      Omit<TLocalItem, 'id'>,
+      TLocalItem['id']
+    >,
+  ) => Promise<void>,
+): (
   collectionOptions: any,
   changeset: Parameters<
     ConstructorParameters<
@@ -550,39 +597,40 @@ export function createRemoveLocalId<TLocalItem extends { id: unknown }>(
     >[0]['push']
   >[1],
 ) => Promise<void> {
-  return async (collectionOptions, changeset) => pusher(collectionOptions, {
-    rawChanges: changeset.rawChanges.map((originalRawChange) => {
-      switch (originalRawChange.type) {
-        case 'insert': {
-          const { id, ...originalDataWithoutId } = originalRawChange.data
-          return {
-            ...originalRawChange,
-            data: originalDataWithoutId,
+  return async (collectionOptions, changeset) =>
+    pusher(collectionOptions, {
+      rawChanges: changeset.rawChanges.map((originalRawChange) => {
+        switch (originalRawChange.type) {
+          case 'insert': {
+            const { id, ...originalDataWithoutId } = originalRawChange.data
+            return {
+              ...originalRawChange,
+              data: originalDataWithoutId,
+            }
+          }
+          case 'remove': {
+            // @todo Ideally, remove and update could also get rid of the id
+            return originalRawChange
+          }
+          case 'update': {
+            return originalRawChange
           }
         }
-        case 'remove': {
-          // @todo Ideally, remove and update could also get rid of the id
-          return originalRawChange
-        }
-        case 'update': {
-          return originalRawChange
-        }
-      }
-    }),
-    changes: {
-      added: changeset.changes.added.map(
-        ({ id, ...itemWithoutId }) => itemWithoutId,
-      ),
-      modified: changeset.changes.modified.map(
-        ({ id, ...itemWithoutId }) => itemWithoutId,
-      ),
-      removed: changeset.changes.removed.map(
-        ({ id, ...itemWithoutId }) => itemWithoutId,
-      ),
-      // @todo would be nice to not depend on the local id here
-      modifiedFields: changeset.changes.modifiedFields,
-    },
-  })
+      }),
+      changes: {
+        added: changeset.changes.added.map(
+          ({ id, ...itemWithoutId }) => itemWithoutId,
+        ),
+        modified: changeset.changes.modified.map(
+          ({ id, ...itemWithoutId }) => itemWithoutId,
+        ),
+        removed: changeset.changes.removed.map(
+          ({ id, ...itemWithoutId }) => itemWithoutId,
+        ),
+        // @todo would be nice to not depend on the local id here
+        modifiedFields: changeset.changes.modifiedFields,
+      },
+    })
 }
 
 export const createLocalId = <TRemoteItem>(
@@ -623,7 +671,8 @@ export function createAddLocalId<TRemoteItem, TParameters extends unknown[]>(
             modified: addIds(remoteItems.changes.modified),
             removed: addIds(remoteItems.changes.removed),
           },
-        })
+        },
+    )
 }
 
 /**
@@ -668,10 +717,17 @@ export type LocalDirectoryForRead = {
  * @param originalPull
  * @param processor
  */
-export function postProcessPull<TBefore, TAfter, TPullParameters extends unknown[]>(
-  originalPull: (...parameters: TPullParameters) => Promise<LoadResponse<TBefore>>,
-  processor: (before: LoadResponse<TBefore>)
-  => LoadResponse<TAfter> | Promise<LoadResponse<TAfter>>,
+export function postProcessPull<
+  TBefore,
+  TAfter,
+  TPullParameters extends unknown[],
+>(
+  originalPull: (
+    ...parameters: TPullParameters
+  ) => Promise<LoadResponse<TBefore>>,
+  processor: (
+    before: LoadResponse<TBefore>,
+  ) => LoadResponse<TAfter> | Promise<LoadResponse<TAfter>>,
 ): (...parameters: TPullParameters) => Promise<LoadResponse<TAfter>> {
   return async (...parameters: TPullParameters) => {
     const before = await originalPull(...parameters)
@@ -889,11 +945,13 @@ export function createPullFiles<
 export function preprocessPush<TBefore, TAfter, TIdentifier>(
   originalPush: (
     collectionOptions: any,
-    changes: PushSecondParameter<TAfter,
-      TIdentifier
-    >) => Promise<void>,
-  processor: (before: PushSecondParameter<TBefore, TIdentifier>)
-  => PushSecondParameter<TAfter, TIdentifier> | Promise<PushSecondParameter<TAfter, TIdentifier>>,
+    changes: PushSecondParameter<TAfter, TIdentifier>,
+  ) => Promise<void>,
+  processor: (
+    before: PushSecondParameter<TBefore, TIdentifier>,
+  ) =>
+    | PushSecondParameter<TAfter, TIdentifier>
+    | Promise<PushSecondParameter<TAfter, TIdentifier>>,
 ): (
   collectionOptions: any,
   changes: PushSecondParameter<TBefore, TIdentifier>,
@@ -1108,12 +1166,17 @@ export function createPushFiles<
  * @param originalHandler
  * @param processor
  */
-export function postProcessChangeEvent<TBefore extends { [key: string]: any }, TAfter>(
+export function postProcessChangeEvent<
+  TBefore extends { [key: string]: any },
+  TAfter,
+>(
   originalHandler: (
     changes: RealtimePostgresChangesPayload<TBefore>,
-    onChange: (data?: LoadResponse<TBefore>) => Promise<void>) => Promise<void> | void,
-  processor: (before: LoadResponse<TBefore>)
-  => LoadResponse<TAfter> | Promise<LoadResponse<TAfter>>,
+    onChange: (data?: LoadResponse<TBefore>) => Promise<void>,
+  ) => Promise<void> | void,
+  processor: (
+    before: LoadResponse<TBefore>,
+  ) => LoadResponse<TAfter> | Promise<LoadResponse<TAfter>>,
 ): (
   changes: RealtimePostgresChangesPayload<TBefore>,
   onChange: (data?: LoadResponse<TAfter>) => Promise<void>,

@@ -10,13 +10,13 @@ import {
   afterAll,
   beforeEach,
   afterEach,
+  vi,
 } from 'vitest'
-import {
-  createClient,
-} from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
 import type SyncManager from '@signaldb/sync/SyncManager'
 import type { LocalDirectoryForRead, LocalDirectoryForWrite } from '../src'
 import {
+  DynamicPuller,
   createAddLocalId,
   baseSelectFromSupabase,
   createPushMethods,
@@ -32,6 +32,10 @@ import {
   postProcessPull,
   preprocessPush,
   postProcessChangeEvent,
+  postProcessChangesPull,
+  filterOutUnmodifiedFromSupabase,
+  createDeletedModifiedTrackingPusher,
+  filterOutDeletedFromSupabase,
 } from '../src'
 import type { Database } from './supabase'
 import {
@@ -46,26 +50,45 @@ const supabase = createClient<Database>(
   EXPO_PUBLIC_SUPABASE_ANON_KEY,
 )
 
-type TestRowType = Omit<
-  Database['public']['Tables']['members']['Row'],
-  '_modified' | '_deleted'
->
-type LocalTestRowType = TestRowType & { id: string }
+type TestRowType = Database['public']['Tables']['members']['Row']
+type LocalTestRowType = Omit<TestRowType, '_modified' | '_deleted'> & {
+  id: string,
+}
 
 type UserRowType = Database['public']['Tables']['users']['Row']
 type LocalUserRow = UserRowType & { _localPath: string | null }
 
 describe('sync general', () => {
-  const realPull = postProcessFullPull(
+  const fullPull = postProcessFullPull(
     executeSelectFromSupabase<Database, 'public', 'members'>(
-      baseSelectFromSupabase<Database, 'public', 'members'>(
-        supabase,
-        'public',
-        'members',
+      filterOutDeletedFromSupabase<Database, 'public', 'members'>(
+        baseSelectFromSupabase<Database, 'public', 'members'>(
+          supabase,
+          'public',
+          'members',
+        ),
       ),
     ),
   )
-  const realPush = createSimplePusher<TestRowType, LocalTestRowType['id']>({
+  const incrementalPull = postProcessChangesPull(
+    executeSelectFromSupabase<Database, 'public', 'members'>(
+      filterOutUnmodifiedFromSupabase<Database, 'public', 'members'>(
+        baseSelectFromSupabase<Database, 'public', 'members'>(
+          supabase,
+          'public',
+          'members',
+        ),
+      ),
+    ),
+  )
+  const fullPullWithId = createAddLocalId(fullPull, ['team_id', 'user_id'])
+  const incrementalPullWithId = createAddLocalId(incrementalPull, [
+    'team_id',
+    'user_id',
+  ])
+  let dynamicPuller: DynamicPuller<typeof incrementalPullWithId>
+
+  const realPush = createDeletedModifiedTrackingPusher<TestRowType>({
     insert: async item => supabase.from('members').insert(item),
     update: async item =>
       supabase
@@ -83,7 +106,6 @@ describe('sync general', () => {
   })
 
   const pushWithoutId = createRemoveLocalId<LocalTestRowType>(realPush)
-  const pullWithId = createAddLocalId(realPull, ['team_id', 'user_id'])
 
   let memberCollection: Collection<LocalTestRowType, LocalTestRowType['id']>
   let memberSyncer: SyncManager<any, LocalTestRowType, LocalTestRowType['id']>
@@ -107,6 +129,11 @@ describe('sync general', () => {
       { name: 'members' },
     )
 
+    dynamicPuller = new DynamicPuller<typeof incrementalPullWithId>(
+      fullPullWithId,
+      incrementalPullWithId,
+    )
+
     memberSyncer = createSupabaseSyncManager<
       LocalTestRowType,
       LocalTestRowType['id']
@@ -114,7 +141,7 @@ describe('sync general', () => {
     memberSyncer.addCollection(memberCollection, {
       name: 'members',
       incrementalPush: pushWithoutId,
-      pull: pullWithId,
+      pull: dynamicPuller.createPullFunction(),
     })
 
     await memberSyncer.sync('members')
@@ -189,9 +216,9 @@ describe('sync general', () => {
       .eq('user_id', newMember.user_id)
       .single()
 
-    expect(memberData2).toBeNull()
-    expect(memberError2).not.toBeNull()
-  }, 20_000)
+    expect(memberData2?._deleted).toBe(true)
+    expect(memberError2).toBeNull()
+  }, 120_000)
 
   it('sync supabase -> local', async () => {
     const initialCount = memberCollection.find().count()
@@ -225,11 +252,13 @@ describe('sync general', () => {
       status: 'member_requested',
       playing_position: 'Winner',
       created_at: new Date().toISOString(),
+      _deleted: false,
+      _modified: new Date().toISOString(),
     }
 
     const { error: memberError } = await supabase
       .from('members')
-      .insert(newMember)
+      .upsert(newMember)
 
     if (memberError) {
       throw memberError
@@ -249,7 +278,7 @@ describe('sync general', () => {
 
     const { error: deleteError } = await supabase
       .from('members')
-      .delete()
+      .update({ _deleted: true, _modified: new Date().toISOString() })
       .eq('team_id', newMember.team_id)
       .eq('user_id', newMember.user_id)
 
@@ -266,7 +295,7 @@ describe('sync general', () => {
 
 describe('sync with files', () => {
   let userCollection: Collection<LocalUserRow, LocalUserRow['id']>
-  const realPull = postProcessFullPull(
+  const fullPull = postProcessFullPull(
     executeSelectFromSupabase<Database, 'public', 'users'>(
       baseSelectFromSupabase<Database, 'public', 'users'>(
         supabase,
@@ -402,9 +431,15 @@ describe('sync with files', () => {
     )
 
     const pullWithFiles = postProcessPull<
-      UserRowType, LocalUserRow, Parameters<typeof realPull>>(realPull, filePuller)
+      UserRowType,
+      LocalUserRow,
+      Parameters<typeof fullPull>
+    >(fullPull, filePuller)
     const pushWithFiles = preprocessPush<
-      LocalUserRow, UserRowType, LocalUserRow['id']>(realPush, filePusher)
+      LocalUserRow,
+      UserRowType,
+      LocalUserRow['id']
+    >(realPush, filePusher)
 
     const remoteHandler = createTableChangeHandler<UserRowType>({
       id: '',
@@ -829,4 +864,117 @@ describe('sync with files', () => {
       }),
     )
   }, 120_000)
+})
+
+describe('Dynamic Puller', () => {
+  it('should use fullPull on first call and decrement remainingFullPulls', async () => {
+    // Arrange
+    const fullPullMock = vi.fn().mockResolvedValue({ items: [{ id: '1' }] })
+    const incrementalPullMock = vi.fn().mockResolvedValue({
+      changes: {
+        added: [],
+        modified: [],
+        removed: [],
+        modifiedFields: new Map(),
+      },
+    })
+    const puller = new DynamicPuller(fullPullMock, incrementalPullMock)
+
+    // Act
+    const result = await puller.createPullFunction()({})
+
+    // Assert
+    expect(fullPullMock).toHaveBeenCalledTimes(1)
+    expect(incrementalPullMock).not.toHaveBeenCalled()
+    expect(result).toEqual({ items: [{ id: '1' }] })
+    expect(puller.remainingFullPulls).toBe(0)
+  })
+
+  it('should use incrementalPull after fullPull has been used', async () => {
+    // Arrange
+    const fullPullMock = vi.fn().mockResolvedValue({ items: [{ id: '1' }] })
+    const incrementalPullMock = vi.fn().mockResolvedValue({
+      changes: {
+        added: [{ id: '2' }],
+        modified: [],
+        removed: [],
+        modifiedFields: new Map(),
+      },
+    })
+    const puller = new DynamicPuller(fullPullMock, incrementalPullMock)
+    const pullFunction = puller.createPullFunction()
+
+    // Act
+    await pullFunction({})
+    const result = await pullFunction({})
+
+    // Assert
+    expect(fullPullMock).toHaveBeenCalledTimes(1)
+    expect(incrementalPullMock).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({
+      changes: {
+        added: [{ id: '2' }],
+        modified: [],
+        removed: [],
+        modifiedFields: new Map(),
+      },
+    })
+    expect(puller.remainingFullPulls).toBe(0)
+  })
+
+  it('should allow customizing remainingFullPulls', async () => {
+    // Arrange
+    const fullPullMock = vi.fn().mockResolvedValue({ items: [{ id: '1' }] })
+    const incrementalPullMock = vi.fn().mockResolvedValue({
+      changes: {
+        added: [],
+        modified: [{ id: '2' }],
+        removed: [],
+        modifiedFields: new Map(),
+      },
+    })
+    const puller = new DynamicPuller(fullPullMock, incrementalPullMock)
+    puller.remainingFullPulls = 2
+    const pullFunction = puller.createPullFunction()
+
+    // Act
+    await pullFunction({})
+    expect(puller.remainingFullPulls).toBe(1)
+    await pullFunction({})
+    expect(puller.remainingFullPulls).toBe(0)
+    const result = await pullFunction({})
+
+    // Assert
+    expect(fullPullMock).toHaveBeenCalledTimes(2)
+    expect(incrementalPullMock).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({
+      changes: {
+        added: [],
+        modified: [{ id: '2' }],
+        removed: [],
+        modifiedFields: new Map(),
+      },
+    })
+  })
+
+  it('should pass parameters to the correct pull function', async () => {
+    // Arrange
+    const fullPullMock = vi.fn().mockResolvedValue({ items: [{ id: '1' }] })
+    const incrementalPullMock = vi.fn().mockResolvedValue({
+      changes: {
+        added: [],
+        modified: [],
+        removed: [],
+        modifiedFields: new Map(),
+      },
+    })
+    const puller = new DynamicPuller(fullPullMock, incrementalPullMock)
+    const pullFunction = puller.createPullFunction()
+
+    // Act
+    await pullFunction({ test: 123 })
+
+    // Assert
+    expect(fullPullMock).toHaveBeenCalledWith({ test: 123 })
+  })
 })
