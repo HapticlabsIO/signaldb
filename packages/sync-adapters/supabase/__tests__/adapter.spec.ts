@@ -89,7 +89,6 @@ describe('sync general', () => {
   let dynamicPuller: DynamicPuller<typeof incrementalPullWithId>
 
   const realPush = createDeletedModifiedTrackingPusher<TestRowType>({
-    insert: async item => supabase.from('members').insert(item),
     update: async item =>
       supabase
         .from('members')
@@ -97,12 +96,6 @@ describe('sync general', () => {
         .eq('team_id', item.team_id)
         .eq('user_id', item.user_id),
     upsert: async item => supabase.from('members').upsert(item),
-    remove: async item =>
-      supabase
-        .from('members')
-        .delete()
-        .eq('team_id', item.team_id)
-        .eq('user_id', item.user_id),
   })
 
   const pushWithoutId = createRemoveLocalId<LocalTestRowType>(realPush)
@@ -133,6 +126,9 @@ describe('sync general', () => {
       fullPullWithId,
       incrementalPullWithId,
     )
+    const dynamicPull = dynamicPuller.createPullFunction()
+    const correctedDynamicPull
+      = async (_: any, timing: Parameters<typeof dynamicPull>[0]) => dynamicPull(timing)
 
     memberSyncer = createSupabaseSyncManager<
       LocalTestRowType,
@@ -141,7 +137,7 @@ describe('sync general', () => {
     memberSyncer.addCollection(memberCollection, {
       name: 'members',
       incrementalPush: pushWithoutId,
-      pull: dynamicPuller.createPullFunction(),
+      pull: correctedDynamicPull,
     })
 
     await memberSyncer.sync('members')

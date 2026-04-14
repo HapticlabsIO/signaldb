@@ -381,7 +381,7 @@ export function postProcessChangesPull<
   }
 }
 
-export class DynamicPuller<TPullFunction extends (...args: any[]) => unknown> {
+export class DynamicPuller<TPullFunction extends (...args: any[]) => any> {
   private fullPull: TPullFunction
   private incrementalPull: TPullFunction
 
@@ -393,7 +393,7 @@ export class DynamicPuller<TPullFunction extends (...args: any[]) => unknown> {
   }
 
   public createPullFunction() {
-    return (...parameters: Parameters<TPullFunction>) => {
+    return (...parameters: Parameters<TPullFunction>): ReturnType<TPullFunction> => {
       if (this.remainingFullPulls > 0) {
         this.remainingFullPulls -= 1
         return this.fullPull(...parameters)
@@ -424,15 +424,16 @@ export function createDeletedModifiedTrackingPusher<
 >({
   upsert,
   update,
-}: PushMethods<
+}: Pick<PushMethods<
   Omit<TRemoteItem, '_deleted' | '_modified'> & {
     _deleted: boolean,
     _modified: string,
   }
->): (
+>, 'upsert' | 'update'>): (
   collectionOptions: any,
   pushParameters: PushSecondParameter<
-    Omit<TRemoteItem, '_deleted' | '_modified'>,
+    Omit<TRemoteItem, '_deleted' | '_modified'>
+    & Partial<Pick<TRemoteItem, '_modified'>>,
     unknown
   >,
 ) => Promise<void> {
@@ -441,38 +442,20 @@ export function createDeletedModifiedTrackingPusher<
       await upsert({
         ...item,
         _deleted: false,
-        _modified: new Date().toISOString(),
-      }).then(({ error }) => {
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error('Insert error', error, item)
-        }
-        return { error }
+        _modified: item._modified ?? new Date().toISOString(),
       }),
     changedAction: async (item) => {
       return await update({
         ...item,
-        _modified: new Date().toISOString(),
         _deleted: false,
-      }).then(({ error }) => {
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error('Update error', error, item)
-        }
-        return { error }
+        _modified: item._modified ?? new Date().toISOString(),
       })
     },
     removedAction: async item =>
       await update({
         ...item,
         _deleted: true,
-        _modified: new Date().toISOString(),
-      }).then(({ error }) => {
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error('Remove error', error, item)
-        }
-        return { error }
+        _modified: item._modified ?? new Date().toISOString(),
       }),
   })
 }
@@ -489,14 +472,14 @@ export function createSimplePusher<TRemoteItem, TLocalIdType>({
   insert,
   update,
   remove,
-}: PushMethods<TRemoteItem>): (
+}: Pick<PushMethods<TRemoteItem>, 'insert' | 'update' | 'remove'>): (
   collectionOptions: any,
   pushParameters: PushSecondParameter<TRemoteItem, TLocalIdType>,
 ) => Promise<void> {
   return createGenericPusher({
     addedAction: insert,
-    changedAction: async item => await update(item),
-    removedAction: async item => await remove(item),
+    changedAction: update,
+    removedAction: remove,
   })
 }
 
