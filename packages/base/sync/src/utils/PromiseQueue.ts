@@ -30,6 +30,14 @@ export default class PromiseQueue {
   }
 
   /**
+   * Waits for the currently executing promise to terminate and drops all subsequent promises
+   */
+  public async dispose(): Promise<void> {
+    this.queue = []
+    await this.add(() => Promise.resolve())
+  }
+
+  /**
    * Method to check if there is a pending promise in the queue
    * @returns True if there is a pending promise, false otherwise
    */

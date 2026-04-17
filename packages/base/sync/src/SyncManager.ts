@@ -6,7 +6,7 @@ import type {
   LoadResponse,
   Selector,
 } from '@signaldb/core'
-import { Collection, randomId, createIndex } from '@signaldb/core'
+import { Collection, randomId, createIndex, EventEmitter } from '@signaldb/core'
 import debounce from './utils/debounce'
 import PromiseQueue from './utils/PromiseQueue'
 import sync from './sync'
@@ -56,6 +56,15 @@ interface Options<
   debounceTime?: number,
 }
 
+interface SyncManagerEvents {
+  'sync.batchStarted': (name: string) => void,
+  'sync.batchCompleted': (name: string) => void,
+  'sync.pullStarted': (name: string) => void,
+  'sync.pullCompleted': (name: string) => void,
+  'sync.pushStarted': (name: string) => void,
+  'sync.pushCompleted': (name: string) => void,
+}
+
 /**
  * Class to manage syncing of collections.
  * @template CollectionOptions
@@ -86,7 +95,7 @@ export default class SyncManager<
   CollectionOptions extends Record<string, any>,
   ItemType extends BaseItem<IdType> = BaseItem,
   IdType = any,
-> {
+> extends EventEmitter<SyncManagerEvents> {
   protected options: Options<CollectionOptions, ItemType, IdType>
   protected collections: Map<string, {
     collection: Collection<ItemType, IdType, any>,
@@ -121,6 +130,7 @@ export default class SyncManager<
    * @param [options.debounceTime] The time in milliseconds to debounce push operations.
    */
   constructor(options: Options<CollectionOptions, ItemType, IdType>) {
+    super()
     this.options = {
       autostart: true,
       ...options,
@@ -211,6 +221,13 @@ export default class SyncManager<
       }
     })
     this.collections.clear()
+
+    const queueDisposals: Promise<void>[] = []
+    for (const queue of this.syncQueues.values()) {
+      queueDisposals.push(queue.dispose())
+    }
+    await Promise.all(queueDisposals)
+
     this.syncQueues.clear()
     this.remoteChanges.splice(0)
     await Promise.all([
@@ -537,10 +554,13 @@ export default class SyncManager<
           status: 'active',
         })
       }
+
+      this.emit('sync.pullStarted', name)
       const data = await this.options.pull(collectionOptions, {
         lastFinishedSyncStart: lastFinishedSync?.start,
         lastFinishedSyncEnd: lastFinishedSync?.end,
       })
+      this.emit('sync.pullCompleted', name)
 
       await this.syncWithData(name, data)
     }
@@ -617,14 +637,24 @@ export default class SyncManager<
       changes: currentChanges,
       lastSnapshot: lastSnapshot?.items,
       data,
-      pull: () => this.options.pull(collectionOptions, {
-        lastFinishedSyncStart: lastFinishedSync?.start,
-        lastFinishedSyncEnd: lastFinishedSync?.end,
-      }),
-      push: changes => this.options.push(collectionOptions, {
-        changes,
-        rawChanges: currentChanges,
-      }),
+      pull: () => {
+        this.emit('sync.pullStarted', name)
+        const result = this.options.pull(collectionOptions, {
+          lastFinishedSyncStart: lastFinishedSync?.start,
+          lastFinishedSyncEnd: lastFinishedSync?.end,
+        })
+        this.emit('sync.pullCompleted', name)
+        return result
+      },
+      push: (changes) => {
+        this.emit('sync.pushStarted', name)
+        const result = this.options.push(collectionOptions, {
+          changes,
+          rawChanges: currentChanges,
+        })
+        this.emit('sync.pushCompleted', name)
+        return result
+      },
       insert: (item) => {
         // add multiple remote changes as we don't know if the item will be updated or inserted during replace
         this.remoteChanges.push({
@@ -670,9 +700,11 @@ export default class SyncManager<
         collection.removeOne({ id: itemId } as Selector<any>)
       },
       batch: (fn) => {
+        this.emit('sync.batchStarted', name)
         collection.batch(() => {
           fn()
         })
+        this.emit('sync.batchCompleted', name)
       },
     })
       .then(async (snapshot) => {
