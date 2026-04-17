@@ -68,7 +68,7 @@ export class SignalDBHistory {
   private history: UndoRedoable[][] = []
 
   private isGlobalBatchRunning = false
-  private isCollectionBatchRunning = false
+  private activeCollectionBatchCount = 0
   private currentBatch: UndoRedoable[] = []
 
   private globalPauseDepth = 0
@@ -102,20 +102,20 @@ export class SignalDBHistory {
   }
 
   public doPaused<T>(fn: () => T): T {
-    this.globalPauseDepth++
+    this.pauseAll()
     try {
       return fn()
     } finally {
-      this.globalPauseDepth--
+      this.resumeAll()
     }
   }
 
   public async doPausedAsync<T>(fn: () => Promise<T>): Promise<T> {
-    this.globalPauseDepth++
+    this.pauseAll()
     try {
       return await fn()
     } finally {
-      this.globalPauseDepth--
+      this.resumeAll()
     }
   }
 
@@ -123,20 +123,13 @@ export class SignalDBHistory {
     collection: Collection<TItem, TId, any>,
     fn: () => T,
   ): T {
-    const currentDepth = this.collectionPauseDepths.get(collection)
-    if (currentDepth === undefined) {
-      // eslint-disable-next-line no-console
-      console.error('Collection is not added to the history manager.')
-      return fn()
-    }
+    const hasBeenPaused = this.pauseCollection(collection)
 
-    this.collectionPauseDepths.set(collection, currentDepth + 1)
     try {
       return fn()
     } finally {
-      const depthAfterOperation = this.collectionPauseDepths.get(collection)
-      if (depthAfterOperation) {
-        this.collectionPauseDepths.set(collection, depthAfterOperation - 1)
+      if (hasBeenPaused) {
+        this.resumeCollection(collection)
       }
     }
   }
@@ -145,22 +138,59 @@ export class SignalDBHistory {
     collection: Collection<TItem, TId, any>,
     fn: () => Promise<T>,
   ): Promise<T> {
+    const hasBeenPaused = this.pauseCollection(collection)
+
+    try {
+      return await fn()
+    } finally {
+      if (hasBeenPaused) {
+        this.resumeCollection(collection)
+      }
+    }
+  }
+
+  public pauseAll(): void {
+    this.globalPauseDepth++
+  }
+
+  public resumeAll(): void {
+    if (this.globalPauseDepth === 0) {
+      // eslint-disable-next-line no-console
+      console.error('Cannot resume all, not currently paused.')
+      return
+    }
+    this.globalPauseDepth--
+  }
+
+  public pauseCollection<TItem extends BaseItem<TId>, TId>(
+    collection: Collection<TItem, TId, any>,
+  ): boolean {
     const currentDepth = this.collectionPauseDepths.get(collection)
     if (currentDepth === undefined) {
       // eslint-disable-next-line no-console
       console.error('Collection is not added to the history manager.')
-      return await fn()
+      return false
     }
-
     this.collectionPauseDepths.set(collection, currentDepth + 1)
-    try {
-      return await fn()
-    } finally {
-      const depthAfterOperation = this.collectionPauseDepths.get(collection)
-      if (depthAfterOperation) {
-        this.collectionPauseDepths.set(collection, depthAfterOperation - 1)
-      }
+    return true
+  }
+
+  public resumeCollection<TItem extends BaseItem<TId>, TId>(
+    collection: Collection<TItem, TId, any>,
+  ): boolean {
+    const currentDepth = this.collectionPauseDepths.get(collection)
+    if (currentDepth === undefined) {
+      // eslint-disable-next-line no-console
+      console.error('Collection is not added to the history manager.')
+      return false
     }
+    if (currentDepth === 0) {
+      // eslint-disable-next-line no-console
+      console.error('Cannot resume collection, not currently paused.')
+      return false
+    }
+    this.collectionPauseDepths.set(collection, currentDepth - 1)
+    return true
   }
 
   public destroy(): void {
@@ -253,7 +283,7 @@ export class SignalDBHistory {
   }
 
   private endGlobalBatch(): void {
-    if (this.isCollectionBatchRunning) {
+    if (this.activeCollectionBatchCount > 0) {
       throw new Error(
         'Cannot end global batch while a collection batch is still open.',
       )
@@ -263,20 +293,15 @@ export class SignalDBHistory {
   }
 
   private startCollectionBatch(): void {
-    if (this.isCollectionBatchRunning) {
-      throw new Error(
-        'Cannot start a collection batch while another batch is still open.',
-      )
-    }
-    this.isCollectionBatchRunning = true
+    this.activeCollectionBatchCount++
   }
 
   private endCollectionBatch(): void {
-    if (!this.isCollectionBatchRunning) {
+    if (this.activeCollectionBatchCount === 0) {
       throw new Error('Cannot end a collection batch while no batch is open.')
     }
-    this.isCollectionBatchRunning = false
-    if (!this.isGlobalBatchRunning) {
+    this.activeCollectionBatchCount--
+    if (!this.isGlobalBatchRunning && this.activeCollectionBatchCount === 0) {
       this.commitBatch()
     }
   }
@@ -312,7 +337,7 @@ export class SignalDBHistory {
 
     this.currentBatch.push(operation)
 
-    if (!this.isGlobalBatchRunning && !this.isCollectionBatchRunning) {
+    if (!this.isGlobalBatchRunning && this.activeCollectionBatchCount === 0) {
       // No batch, immediately commit
       this.commitBatch()
     }

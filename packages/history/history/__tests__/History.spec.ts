@@ -158,6 +158,121 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 1 })).toBeUndefined()
   })
 
+  it('should execute doWithPausedCollection and only pause the target collection', () => {
+    const secondCollection = createCollection()
+    history.addCollection(secondCollection)
+
+    collection.insert(item)
+    secondCollection.insert({ id: 2, value: 'b' })
+
+    history.doWithPausedCollection(collection, () => {
+      collection.insert({ id: 3, value: 'c' })
+      collection.updateOne({ id: 1 }, { $set: { value: 'z' } })
+      secondCollection.insert({ id: 4, value: 'd' })
+    })
+
+    expect(history['history'].length).toBe(3)
+    expect(collection.findOne({ id: 1 })?.value).toBe('z')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+    expect(secondCollection.findOne({ id: 4 })?.value).toBe('d')
+
+    history.undo()
+    expect(secondCollection.findOne({ id: 4 })).toBeUndefined()
+    expect(collection.findOne({ id: 1 })?.value).toBe('z')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+  })
+
+  it('should execute doWithPausedCollectionAsync and only pause the target collection', async () => {
+    const secondCollection = createCollection()
+    history.addCollection(secondCollection)
+
+    collection.insert(item)
+    secondCollection.insert({ id: 2, value: 'b' })
+
+    await history.doWithPausedCollectionAsync(collection, async () => {
+      collection.insert({ id: 3, value: 'c' })
+      await new Promise(resolve => setTimeout(resolve, 10))
+      collection.updateOne({ id: 1 }, { $set: { value: 'y' } })
+      secondCollection.insert({ id: 4, value: 'd' })
+    })
+
+    expect(history['history'].length).toBe(3)
+    expect(collection.findOne({ id: 1 })?.value).toBe('y')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+    expect(secondCollection.findOne({ id: 4 })?.value).toBe('d')
+
+    history.undo()
+    expect(secondCollection.findOne({ id: 4 })).toBeUndefined()
+    expect(collection.findOne({ id: 1 })?.value).toBe('y')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+  })
+
+  it('should record history for a collection again after doWithPausedCollection is finished', () => {
+    collection.insert(item)
+
+    history.doWithPausedCollection(collection, () => {
+      collection.insert({ id: 2, value: 'b' })
+    })
+
+    collection.insert({ id: 3, value: 'c' })
+
+    expect(history['history'].length).toBe(2)
+    history.undo()
+    expect(collection.findOne({ id: 3 })).toBeUndefined()
+    expect(collection.findOne({ id: 2 })?.value).toBe('b')
+  })
+
+  it('should record history for a collection again after doWithPausedCollectionAsync is finished', async () => {
+    collection.insert(item)
+
+    await history.doWithPausedCollectionAsync(collection, async () => {
+      collection.insert({ id: 2, value: 'b' })
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+
+    collection.insert({ id: 3, value: 'c' })
+
+    expect(history['history'].length).toBe(2)
+    history.undo()
+    expect(collection.findOne({ id: 3 })).toBeUndefined()
+    expect(collection.findOne({ id: 2 })?.value).toBe('b')
+  })
+
+  it('should execute doWithPausedCollection for untracked collections and log an error', () => {
+    const untrackedCollection = createCollection()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    history.doWithPausedCollection(untrackedCollection, () => {
+      untrackedCollection.insert({ id: 2, value: 'b' })
+    })
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Collection is not added to the history manager.',
+    )
+    expect(untrackedCollection.findOne({ id: 2 })?.value).toBe('b')
+    expect(history['history'].length).toBe(0)
+
+    errorSpy.mockRestore()
+  })
+
+  it('should execute doWithPausedCollectionAsync for untracked collections and log an error', async () => {
+    const untrackedCollection = createCollection()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await history.doWithPausedCollectionAsync(untrackedCollection, async () => {
+      untrackedCollection.insert({ id: 2, value: 'b' })
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Collection is not added to the history manager.',
+    )
+    expect(untrackedCollection.findOne({ id: 2 })?.value).toBe('b')
+    expect(history['history'].length).toBe(0)
+
+    errorSpy.mockRestore()
+  })
+
   it('should record history after doPaused is finished', () => {
     collection.insert(item)
     history.doPaused(() => {
