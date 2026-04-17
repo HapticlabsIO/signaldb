@@ -40,21 +40,15 @@ class UpdateOperation<
   }
 
   public forward(): void {
-    this.collection.updateOne(
-      { id: this.before.id } as Selector<T>,
-      {
-        $set: this.after,
-      },
-    )
+    this.collection.updateOne({ id: this.before.id } as Selector<T>, {
+      $set: this.after,
+    })
   }
 
   public backward(): void {
-    this.collection.updateOne(
-      { id: this.after.id } as Selector<T>,
-      {
-        $set: this.before,
-      },
-    )
+    this.collection.updateOne({ id: this.after.id } as Selector<T>, {
+      $set: this.before,
+    })
   }
 }
 
@@ -77,7 +71,9 @@ export class SignalDBHistory {
   private isCollectionBatchRunning = false
   private currentBatch: UndoRedoable[] = []
 
-  private pauseDepth = 0
+  private globalPauseDepth = 0
+  private collectionPauseDepths: Map<Collection<any, any, any>, number>
+    = new Map()
 
   private undoneSteps = 0
   private isUndoingOrRedoing = false
@@ -85,7 +81,10 @@ export class SignalDBHistory {
 
   // Destruction support
   private removeStaticListeners: () => void
-  private removeCollectionListeners: (() => void)[] = []
+  private removeCollectionListeners: Map<
+    Collection<any, any, any>,
+    () => void
+  > = new Map()
 
   public constructor(maxHistoryLength = 100) {
     this.maxHistoryLength = maxHistoryLength
@@ -103,42 +102,115 @@ export class SignalDBHistory {
   }
 
   public doPaused<T>(fn: () => T): T {
-    this.pauseDepth++
+    this.globalPauseDepth++
     try {
       return fn()
     } finally {
-      this.pauseDepth--
+      this.globalPauseDepth--
     }
   }
 
   public async doPausedAsync<T>(fn: () => Promise<T>): Promise<T> {
-    this.pauseDepth++
+    this.globalPauseDepth++
     try {
       return await fn()
     } finally {
-      this.pauseDepth--
+      this.globalPauseDepth--
+    }
+  }
+
+  public doWithPausedCollection<TItem extends BaseItem<TId>, TId, T>(
+    collection: Collection<TItem, TId, any>,
+    fn: () => T,
+  ): T {
+    const currentDepth = this.collectionPauseDepths.get(collection)
+    if (currentDepth === undefined) {
+      // eslint-disable-next-line no-console
+      console.error('Collection is not added to the history manager.')
+      return fn()
+    }
+
+    this.collectionPauseDepths.set(collection, currentDepth + 1)
+    try {
+      return fn()
+    } finally {
+      const depthAfterOperation = this.collectionPauseDepths.get(collection)
+      if (depthAfterOperation) {
+        this.collectionPauseDepths.set(collection, depthAfterOperation - 1)
+      }
+    }
+  }
+
+  public async doWithPausedCollectionAsync<TItem extends BaseItem<TId>, TId, T>(
+    collection: Collection<TItem, TId, any>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const currentDepth = this.collectionPauseDepths.get(collection)
+    if (currentDepth === undefined) {
+      // eslint-disable-next-line no-console
+      console.error('Collection is not added to the history manager.')
+      return await fn()
+    }
+
+    this.collectionPauseDepths.set(collection, currentDepth + 1)
+    try {
+      return await fn()
+    } finally {
+      const depthAfterOperation = this.collectionPauseDepths.get(collection)
+      if (depthAfterOperation) {
+        this.collectionPauseDepths.set(collection, depthAfterOperation - 1)
+      }
     }
   }
 
   public destroy(): void {
-    for (let i = 0; i < this.removeCollectionListeners.length; i++) {
-      this.removeCollectionListeners[i]()
+    for (const removeCollectionListener of this.removeCollectionListeners.values()) {
+      removeCollectionListener()
     }
+    this.removeCollectionListeners.clear()
     this.removeStaticListeners()
   }
 
-  public addCollection(collection: Collection<BaseItem, any, any>): void {
-    const addedListener = (item: BaseItem) => {
+  public addCollection<TItem extends BaseItem<TId>, TId>(
+    collection: Collection<TItem, TId, any>,
+  ): void {
+    if (this.removeCollectionListeners.has(collection)) {
+      // eslint-disable-next-line no-console
+      console.error(
+        'Collection is already added to the history manager.',
+        collection,
+      )
+      return
+    }
+
+    const addedListener = (item: TItem) => {
+      // Ignore events while paused
+      if (
+        this.globalPauseDepth !== 0
+        || this.collectionPauseDepths.get(collection) !== 0
+      ) {
+        return
+      }
       this.pushToBatch(new InsertOperation(item, collection))
     }
-    const changedListener = (
-      newItem: BaseItem,
-      change: any,
-      oldItem: BaseItem,
-    ) => {
+    const changedListener = (newItem: TItem, change: any, oldItem: TItem) => {
+      // Ignore events while paused
+      if (
+        this.globalPauseDepth !== 0
+        || this.collectionPauseDepths.get(collection) !== 0
+      ) {
+        return
+      }
       this.pushToBatch(new UpdateOperation(oldItem, newItem, collection))
     }
-    const removedListener = (item: BaseItem) => {
+    const removedListener = (item: TItem) => {
+      // Ignore events while paused
+      if (
+        this.globalPauseDepth !== 0
+        || this.collectionPauseDepths.get(collection) !== 0
+      ) {
+        return
+      }
       this.pushToBatch(new RemoveOperation(item, collection))
     }
     const batchStartListener = this.startCollectionBatch.bind(this)
@@ -150,13 +222,25 @@ export class SignalDBHistory {
     collection.on('batch.start', batchStartListener)
     collection.on('batch.end', batchEndListener)
 
-    this.removeCollectionListeners.push(() => {
+    this.removeCollectionListeners.set(collection, () => {
       collection.off('added', addedListener)
       collection.off('changed', changedListener)
       collection.off('removed', removedListener)
       collection.off('batch.start', batchStartListener)
       collection.off('batch.end', batchEndListener)
     })
+    this.collectionPauseDepths.set(collection, 0)
+  }
+
+  public removeCollection<TItem extends BaseItem<TId>, TId>(
+    collection: Collection<TItem, TId, any>,
+  ): void {
+    const removeListeners = this.removeCollectionListeners.get(collection)
+    if (removeListeners) {
+      removeListeners()
+    }
+    this.removeCollectionListeners.delete(collection)
+    this.collectionPauseDepths.delete(collection)
   }
 
   private startGlobalBatch(): void {
@@ -223,11 +307,6 @@ export class SignalDBHistory {
   private pushToBatch(operation: UndoRedoable): void {
     // Don't record operations that are already in the history
     if (this.isUndoingOrRedoing) {
-      return
-    }
-
-    // Don't record operations while paused
-    if (this.pauseDepth > 0) {
       return
     }
 

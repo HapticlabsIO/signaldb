@@ -41,7 +41,7 @@ export const createSupabaseSyncManager = <
       collectionOptions: any,
       onChange: (data?: LoadResponse<TLocalItem>) => Promise<void>,
     ) => CleanupFunction | Promise<CleanupFunction>,
-  } & {},
+  },
   TLocalItem,
   TLocalIdType
 > =>
@@ -74,7 +74,7 @@ export function createTableChangeHandler<
 >(dummyItem: TRemoteItem) {
   return (
     changes: RealtimePostgresChangesPayload<TRemoteItem>,
-    onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>,
+    onChange: (data?: { changes: Exclude<LoadResponse<TRemoteItem>['changes'], undefined> }) => Promise<void>,
   ) => {
     const newIsDeleted
       = changes.new != null
@@ -135,7 +135,7 @@ export function startListeningToTableChanges<
   dummyItem: TRemoteItem,
 ): (
   collectionOptions: any,
-  onChange: (data?: LoadResponse<TRemoteItem>) => Promise<void>,
+  onChange: (data?: { changes: Exclude<LoadResponse<TRemoteItem>['changes'], undefined> }) => Promise<void>,
 ) => CleanupFunction | Promise<CleanupFunction> {
   const handler = createTableChangeHandler(dummyItem)
   return (config, onChange) => {
