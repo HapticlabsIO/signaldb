@@ -5,7 +5,7 @@ export type {
   Changeset,
   LoadResponse,
 } from './types/PersistenceAdapter'
-export type { default as Selector } from './types/Selector'
+export type { default as Selector, DotNotation, GetType } from './types/Selector'
 export type { default as Modifier } from './types/Modifier'
 export type {
   BaseItem,

@@ -67,7 +67,7 @@ class RemoveOperation<T extends BaseItem<I> = BaseItem, I = any>
 export class SignalDBHistory {
   private history: UndoRedoable[][] = []
 
-  private isGlobalBatchRunning = false
+  private activeGlobalBatchCount = 0
   private activeCollectionBatchCount = 0
   private currentBatch: UndoRedoable[] = []
 
@@ -274,22 +274,19 @@ export class SignalDBHistory {
   }
 
   private startGlobalBatch(): void {
-    if (this.isGlobalBatchRunning) {
-      throw new Error(
-        'Cannot start a global batch while another batch is still open.',
-      )
-    }
-    this.isGlobalBatchRunning = true
+    this.activeGlobalBatchCount++
   }
 
   private endGlobalBatch(): void {
-    if (this.activeCollectionBatchCount > 0) {
+    if (this.activeGlobalBatchCount <= 0) {
       throw new Error(
-        'Cannot end global batch while a collection batch is still open.',
+        'Cannot end global batch while none is  open.',
       )
     }
-    this.isGlobalBatchRunning = false
-    this.commitBatch()
+    this.activeGlobalBatchCount--
+    if (this.activeGlobalBatchCount === 0 && this.activeCollectionBatchCount === 0) {
+      this.commitBatch()
+    }
   }
 
   private startCollectionBatch(): void {
@@ -297,11 +294,11 @@ export class SignalDBHistory {
   }
 
   private endCollectionBatch(): void {
-    if (this.activeCollectionBatchCount === 0) {
-      throw new Error('Cannot end a collection batch while no batch is open.')
+    if (this.activeCollectionBatchCount <= 0) {
+      throw new Error('Cannot end a collection batch while none is open.')
     }
     this.activeCollectionBatchCount--
-    if (!this.isGlobalBatchRunning && this.activeCollectionBatchCount === 0) {
+    if (!this.activeGlobalBatchCount && this.activeCollectionBatchCount === 0) {
       this.commitBatch()
     }
   }
@@ -337,7 +334,7 @@ export class SignalDBHistory {
 
     this.currentBatch.push(operation)
 
-    if (!this.isGlobalBatchRunning && this.activeCollectionBatchCount === 0) {
+    if (!this.activeGlobalBatchCount && this.activeCollectionBatchCount === 0) {
       // No batch, immediately commit
       this.commitBatch()
     }

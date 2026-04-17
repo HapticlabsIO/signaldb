@@ -199,18 +199,20 @@ export default class Collection<
    * This improves performance by avoiding repetitive index recalculations and
    * provides atomicity for the batch of operations.
    * @param callback - The batch operation to execute.
+   * @returns The result of the batch operation callback.
    */
-  static batch(callback: () => void) {
+  static batch<TReturn>(callback: () => TReturn): TReturn {
     if (Collection.staticBatchOperationsInProgress === 0) {
       Collection.staticEvents.emit('static.batch.start')
     }
     Collection.staticBatchOperationsInProgress++
-    Collection.collections.reduce((memo, collection) => () =>
+    const result = Collection.collections.reduce((memo, collection) => () =>
       collection.batch(() => memo()), callback)()
     Collection.staticBatchOperationsInProgress--
     if (Collection.staticBatchOperationsInProgress === 0) {
       Collection.staticEvents.emit('static.batch.end')
     }
+    return result
   }
 
   public readonly name: string
@@ -725,30 +727,35 @@ export default class Collection<
    * Performs a batch operation, deferring index rebuilds and allowing multiple
    * modifications to be made atomically. Executes any post-batch callbacks afterwards.
    * @param callback - The batch operation to execute.
+   * @returns The result of the batch operation callback.
    */
-  public batch(callback: () => void) {
+  public batch<TReturn>(callback: () => TReturn): TReturn {
     if (this.batchOperationsInProgress === 0) {
       this.emit('batch.start')
     }
     this.batchOperationsInProgress++
+
+    let result: TReturn
     try {
-      callback()
+      result = callback()
     } finally {
       this.batchOperationsInProgress--
+
+      // Rebuild indices after the last nested batch operation completes
+      if (this.batchOperationsInProgress === 0) {
+      // rebuild indices as they are not rebuilt during batch operations
+        this.rebuildAllIndices()
+
+        // execute all post batch callbacks
+        this.postBatchCallbacks.forEach(callback_ => callback_())
+        this.postBatchCallbacks.clear()
+
+        // emit batch end event
+        this.emit('batch.end')
+      }
     }
 
-    // Rebuild indices after the last nested batch operation completes
-    if (this.batchOperationsInProgress === 0) {
-      // rebuild indiices as they are not rebuilt during batch operations
-      this.rebuildAllIndices()
-
-      // execute all post batch callbacks
-      this.postBatchCallbacks.forEach(callback_ => callback_())
-      this.postBatchCallbacks.clear()
-
-      // emit batch end event
-      this.emit('batch.end')
-    }
+    return result
   }
 
   /**
