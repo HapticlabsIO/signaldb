@@ -11,6 +11,7 @@ import debounce from './utils/debounce'
 import PromiseQueue from './utils/PromiseQueue'
 import sync from './sync'
 import type { Change, Snapshot, SyncOperation } from './types'
+import MutexSemaphore from './utils/mutexSemaphore'
 
 type SyncOptions<T extends Record<string, any>> = {
   name: string,
@@ -111,6 +112,7 @@ export default class SyncManager<
   protected scheduledPushes: Set<string> = new Set()
   protected remoteChanges: Omit<Change, 'id' | 'time'>[] = []
   protected syncQueues: Map<string, PromiseQueue> = new Map()
+  protected mutexes: Map<string, MutexSemaphore> = new Map()
   protected persistenceReady: Promise<void>
   protected isDisposed = false
   protected instanceId = randomId()
@@ -197,6 +199,13 @@ export default class SyncManager<
     return this.syncQueues.get(name) as PromiseQueue
   }
 
+  protected getMutex(name: string) {
+    if (this.mutexes.get(name) == null) {
+      this.mutexes.set(name, new MutexSemaphore())
+    }
+    return this.mutexes.get(name) as MutexSemaphore
+  }
+
   public getPendingLocalChanges(name: string, until: number = Date.now()) {
     return this.changes.find({
       collectionName: name,
@@ -211,6 +220,20 @@ export default class SyncManager<
    * Clears all internal data structures
    */
   public async dispose() {
+    const queueDisposals: Promise<void>[] = []
+    for (const queue of this.syncQueues.values()) {
+      queueDisposals.push(queue.dispose())
+    }
+    await Promise.all(queueDisposals)
+
+    const mutexDestructions: Promise<void>[] = []
+    for (const mutex of this.mutexes.values()) {
+      mutexDestructions.push(mutex.lock().then(() => {
+        mutex.destructor()
+      }))
+    }
+    await Promise.all(mutexDestructions)
+
     const collectionCleanups: Promise<void>[] = []
     this.collections.forEach(({ cleanupFunction }) => {
       if (typeof cleanupFunction === 'function') {
@@ -221,12 +244,6 @@ export default class SyncManager<
       }
     })
     this.collections.clear()
-
-    const queueDisposals: Promise<void>[] = []
-    for (const queue of this.syncQueues.values()) {
-      queueDisposals.push(queue.dispose())
-    }
-    await Promise.all(queueDisposals)
 
     this.syncQueues.clear()
     this.remoteChanges.splice(0)
@@ -516,82 +533,84 @@ export default class SyncManager<
    * @param options.onlyWithChanges If true, the sync process will only be started if there are changes.
    */
   public async sync(name: string, options: { force?: boolean, onlyWithChanges?: boolean } = {}) {
-    if (this.isDisposed) throw new Error('SyncManager is disposed')
-    await this.isReady()
-    const { options: collectionOptions, readyPromise } = this.getCollectionProperties(name)
-    await readyPromise
+    await this.getMutex(name).doWithMutex(async () => {
+      if (this.isDisposed) throw new Error('SyncManager is disposed')
+      await this.isReady()
+      const { options: collectionOptions, readyPromise } = this.getCollectionProperties(name)
+      await readyPromise
 
-    const hasActiveSyncs = this.syncOperations.find({
-      collectionName: name,
-      instanceId: this.instanceId,
-      status: 'active',
-    }, {
-      reactive: false,
-    }).count() > 0
-    const syncTime = Date.now()
-    let syncId: string | null = null
-
-    // schedule for next tick to allow other tasks to run first
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0)
-    })
-    const doSync = async () => {
-      const lastFinishedSync = this.syncOperations.findOne({
+      const hasActiveSyncs = this.syncOperations.find({
         collectionName: name,
-        status: 'done',
+        instanceId: this.instanceId,
+        status: 'active',
       }, {
-        sort: { end: -1 },
         reactive: false,
+      }).count() > 0
+      const syncTime = Date.now()
+      let syncId: string | null = null
+
+      // schedule for next tick to allow other tasks to run first
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0)
       })
-
-      if (options?.onlyWithChanges && this.getPendingLocalChanges(name).count() === 0) return
-
-      if (!hasActiveSyncs) {
-        syncId = this.syncOperations.insert({
-          start: syncTime,
+      const doSync = async () => {
+        const lastFinishedSync = this.syncOperations.findOne({
           collectionName: name,
-          instanceId: this.instanceId,
-          status: 'active',
+          status: 'done',
+        }, {
+          sort: { end: -1 },
+          reactive: false,
         })
-      }
 
-      this.emit('sync.pullStarted', name)
-      const data = await this.options.pull(collectionOptions, {
-        lastFinishedSyncStart: lastFinishedSync?.start,
-        lastFinishedSyncEnd: lastFinishedSync?.end,
-      })
-      this.emit('sync.pullCompleted', name)
+        if (options?.onlyWithChanges && this.getPendingLocalChanges(name).count() === 0) return
 
-      await this.syncWithData(name, data)
-    }
-
-    await (options?.force ? doSync() : this.getSyncQueue(name).add(doSync))
-      .catch((error: Error) => {
-        if (syncId != null) {
-          if (this.options.onError) this.options.onError(collectionOptions, error)
-          this.syncOperations.updateOne({ id: syncId }, {
-            $set: { status: 'error', end: Date.now(), error: error.stack || error.message },
+        if (!hasActiveSyncs) {
+          syncId = this.syncOperations.insert({
+            start: syncTime,
+            collectionName: name,
+            instanceId: this.instanceId,
+            status: 'active',
           })
         }
-        throw error
-      })
 
-    if (syncId != null) {
+        this.emit('sync.pullStarted', name)
+        const data = await this.options.pull(collectionOptions, {
+          lastFinishedSyncStart: lastFinishedSync?.start,
+          lastFinishedSyncEnd: lastFinishedSync?.end,
+        })
+        this.emit('sync.pullCompleted', name)
+
+        await this.syncWithData(name, data)
+      }
+
+      await (options?.force ? doSync() : this.getSyncQueue(name).add(doSync))
+        .catch((error: Error) => {
+          if (syncId != null) {
+            if (this.options.onError) this.options.onError(collectionOptions, error)
+            this.syncOperations.updateOne({ id: syncId }, {
+              $set: { status: 'error', end: Date.now(), error: error.stack || error.message },
+            })
+          }
+          throw error
+        })
+
+      if (syncId != null) {
       // clean up old sync operations
-      this.syncOperations.removeMany({
-        id: { $ne: syncId },
-        collectionName: name,
-        $or: [
-          { end: { $lte: syncTime } },
-          { status: 'active' },
-        ],
-      })
+        this.syncOperations.removeMany({
+          id: { $ne: syncId },
+          collectionName: name,
+          $or: [
+            { end: { $lte: syncTime } },
+            { status: 'active' },
+          ],
+        })
 
-      // update sync operation status to done after everthing was finished
-      this.syncOperations.updateOne({ id: syncId }, {
-        $set: { status: 'done', end: Date.now() },
-      })
-    }
+        // update sync operation status to done after everthing was finished
+        this.syncOperations.updateOne({ id: syncId }, {
+          $set: { status: 'done', end: Date.now() },
+        })
+      }
+    })
   }
 
   /**
