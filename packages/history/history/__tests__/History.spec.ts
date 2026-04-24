@@ -5,6 +5,8 @@ import { SignalDBHistory } from '../src/index'
 interface TestItem extends BaseItem<number> {
   id: number,
   value: string,
+  status?: string,
+  count?: number,
 }
 
 /**
@@ -16,15 +18,29 @@ function createCollection() {
   return collection
 }
 
+/**
+ * Registers a collection with the history manager for the test.
+ * @param history The history instance under test.
+ * @param collection The collection to register.
+ * @returns The registered collection wrapper.
+ */
+function registerCollection(
+  history: SignalDBHistory,
+  collection: Collection<TestItem, number>,
+) {
+  return history.addCollection(collection)
+}
+
 describe('SignalDBHistory', () => {
   let history: SignalDBHistory
   let collection: Collection<TestItem, number>
+  let registeredCollection: ReturnType<typeof registerCollection>
   let item: TestItem
 
   beforeEach(() => {
     history = new SignalDBHistory(10)
     collection = createCollection()
-    history.addCollection(collection)
+    registeredCollection = registerCollection(history, collection)
     item = { id: 1, value: 'a' }
   })
 
@@ -91,9 +107,19 @@ describe('SignalDBHistory', () => {
     expect(history['history'].length).toBe(1)
   })
 
-  it('should destroy listeners', () => {
-    const offSpy = vi.spyOn(collection, 'off')
+  it('should destroy global listeners', () => {
+    const offSpy = vi.spyOn(Collection.staticEvents, 'off')
+
     history.destroy()
+
+    expect(offSpy).toHaveBeenCalled()
+  })
+
+  it('should destroy collection listeners through the registered collection', () => {
+    const offSpy = vi.spyOn(collection, 'off')
+
+    registeredCollection.destructor()
+
     expect(offSpy).toHaveBeenCalled()
   })
 
@@ -158,14 +184,14 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 1 })).toBeUndefined()
   })
 
-  it('should execute doWithPausedCollection and only pause the target collection', () => {
+  it('should execute doPaused on a registered collection and only pause the target collection', () => {
     const secondCollection = createCollection()
-    history.addCollection(secondCollection)
+    registerCollection(history, secondCollection)
 
     collection.insert(item)
     secondCollection.insert({ id: 2, value: 'b' })
 
-    history.doWithPausedCollection(collection, () => {
+    registeredCollection.doPaused(() => {
       collection.insert({ id: 3, value: 'c' })
       collection.updateOne({ id: 1 }, { $set: { value: 'z' } })
       secondCollection.insert({ id: 4, value: 'd' })
@@ -182,14 +208,14 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 3 })?.value).toBe('c')
   })
 
-  it('should execute doWithPausedCollectionAsync and only pause the target collection', async () => {
+  it('should execute doPausedAsync on a registered collection and only pause the target collection', async () => {
     const secondCollection = createCollection()
-    history.addCollection(secondCollection)
+    registerCollection(history, secondCollection)
 
     collection.insert(item)
     secondCollection.insert({ id: 2, value: 'b' })
 
-    await history.doWithPausedCollectionAsync(collection, async () => {
+    await registeredCollection.doPausedAsync(async () => {
       collection.insert({ id: 3, value: 'c' })
       await new Promise(resolve => setTimeout(resolve, 10))
       collection.updateOne({ id: 1 }, { $set: { value: 'y' } })
@@ -207,10 +233,10 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 3 })?.value).toBe('c')
   })
 
-  it('should record history for a collection again after doWithPausedCollection is finished', () => {
+  it('should record history for a collection again after registered doPaused is finished', () => {
     collection.insert(item)
 
-    history.doWithPausedCollection(collection, () => {
+    registeredCollection.doPaused(() => {
       collection.insert({ id: 2, value: 'b' })
     })
 
@@ -222,10 +248,10 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 2 })?.value).toBe('b')
   })
 
-  it('should record history for a collection again after doWithPausedCollectionAsync is finished', async () => {
+  it('should record history for a collection again after registered doPausedAsync is finished', async () => {
     collection.insert(item)
 
-    await history.doWithPausedCollectionAsync(collection, async () => {
+    await registeredCollection.doPausedAsync(async () => {
       collection.insert({ id: 2, value: 'b' })
       await new Promise(resolve => setTimeout(resolve, 5))
     })
@@ -238,39 +264,54 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 2 })?.value).toBe('b')
   })
 
-  it('should execute doWithPausedCollection for untracked collections and log an error', () => {
-    const untrackedCollection = createCollection()
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('should defer history commits for batched columns until the batch is committed', () => {
+    collection.insert({ id: 1, value: 'a', status: 'draft' })
 
-    history.doWithPausedCollection(untrackedCollection, () => {
-      untrackedCollection.insert({ id: 2, value: 'b' })
-    })
+    const batch = registeredCollection.startBatch(1, ['value'])
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      'Collection is not added to the history manager.',
-    )
-    expect(untrackedCollection.findOne({ id: 2 })?.value).toBe('b')
-    expect(history['history'].length).toBe(0)
+    collection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    collection.updateOne({ id: 1 }, { $set: { value: 'c' } })
 
-    errorSpy.mockRestore()
+    expect(history['history'].length).toBe(1)
+    expect(collection.findOne({ id: 1 })?.value).toBe('c')
+
+    batch.commitAndUnregister()
+
+    expect(history['history'].length).toBe(2)
+    history.undo()
+    expect(collection.findOne({ id: 1 })?.value).toBe('a')
+    history.redo()
+    expect(collection.findOne({ id: 1 })?.value).toBe('c')
   })
 
-  it('should execute doWithPausedCollectionAsync for untracked collections and log an error', async () => {
-    const untrackedCollection = createCollection()
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('should keep non-batched column changes separate from the batched update', () => {
+    collection.insert({ id: 1, value: 'a', status: 'draft', count: 0 })
 
-    await history.doWithPausedCollectionAsync(untrackedCollection, async () => {
-      untrackedCollection.insert({ id: 2, value: 'b' })
-      await new Promise(resolve => setTimeout(resolve, 5))
+    const batch = registeredCollection.startBatch(1, ['value'])
+
+    collection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    collection.updateOne({ id: 1 }, { $set: { status: 'published' } })
+    collection.updateOne({ id: 1 }, { $set: { value: 'c' } })
+
+    batch.commitAndUnregister()
+
+    expect(history['history'].length).toBe(3)
+    expect(collection.findOne({ id: 1 })).toMatchObject({
+      value: 'c',
+      status: 'published',
     })
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      'Collection is not added to the history manager.',
-    )
-    expect(untrackedCollection.findOne({ id: 2 })?.value).toBe('b')
-    expect(history['history'].length).toBe(0)
+    history.undo()
+    expect(collection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'published',
+    })
 
-    errorSpy.mockRestore()
+    history.undo()
+    expect(collection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'draft',
+    })
   })
 
   it('should record history after doPaused is finished', () => {
