@@ -44,8 +44,11 @@ interface StaticCollectionEvents {
 }
 
 interface CollectionEvents<T extends BaseItem, E extends BaseItem = T, U = E> {
+  'added.before': (item: T) => void,
   'added': (item: T) => void,
+  'changed.before': (item: T, modifier: Modifier<T>, itemBefore: T) => void,
   'changed': (itemAfter: T, modifier: Modifier<T>, itemBefore: T) => void,
+  'removed.before': (item: T) => void,
   'removed': (item: T) => void,
 
   'persistence.init': () => void,
@@ -771,6 +774,7 @@ export default class Collection<
     const newItem = { id: primaryKeyGenerator(item), ...item } as T
     this.emit('validate', newItem)
     if (this.idIndex.has(serializeValue(newItem.id))) throw new Error('Item with same id already exists')
+    this.emit('added.before', newItem)
     this.memory().push(newItem)
     const itemIndex = this.memory().findIndex(document => document === newItem)
     this.idIndex.set(serializeValue(newItem.id), new Set([itemIndex]))
@@ -846,6 +850,7 @@ export default class Collection<
         throw new Error('Item with same id already exists')
       }
       this.emit('validate', modifiedItem)
+      this.emit('changed.before', modifiedItem, restModifier, item)
       this.memory().splice(index, 1, modifiedItem)
       this.rebuildIndices()
       this.emit('changed', modifiedItem, restModifier, item)
@@ -905,6 +910,9 @@ export default class Collection<
         index,
       }
     })
+    changes.forEach(({ item }, changeIndex) => {
+      this.emit('changed.before', item, restModifier, items[changeIndex])
+    })
     changes.forEach(({ item, index }) => {
       this.memory().splice(index, 1, item)
     })
@@ -951,6 +959,7 @@ export default class Collection<
       }
       const modifiedItem = { id: item.id, ...replacement } as T
       this.emit('validate', modifiedItem)
+      this.emit('changed.before', modifiedItem, replacement as Modifier<T>, item)
       this.memory().splice(index, 1, modifiedItem)
       this.rebuildIndices()
       this.emit('changed', modifiedItem, replacement as Modifier<T>, item)
@@ -972,6 +981,7 @@ export default class Collection<
     if (!selector) throw new Error('Invalid selector')
     const { item, index } = this.getItemAndIndex(selector)
     if (item != null) {
+      this.emit('removed.before', item)
       this.memory().splice(index, 1)
       this.deleteFromIdIndex(item.id, index)
       this.rebuildIndices()
@@ -992,6 +1002,10 @@ export default class Collection<
     if (this.isDisposed) throw new Error('Collection is disposed')
     if (!selector) throw new Error('Invalid selector')
     const items = this.getItems(selector)
+
+    items.forEach((item) => {
+      this.emit('removed.before', item)
+    })
 
     items.forEach((item) => {
       const index = this.memory().findIndex(document => document === item)
