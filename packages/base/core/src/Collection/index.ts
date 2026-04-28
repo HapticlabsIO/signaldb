@@ -63,9 +63,6 @@ interface CollectionEvents<T extends BaseItem, E extends BaseItem = T, U = E> {
   'observer.created': <O extends FindOptions<T>>(selector?: Selector<T>, options?: O) => void,
   'observer.disposed': <O extends FindOptions<T>>(selector?: Selector<T>, options?: O) => void,
 
-  'batch.start': () => void,
-  'batch.end': () => void,
-
   'getItems': (selector: Selector<T> | undefined) => void,
   'find': <O extends FindOptions<T>>(
     selector: Selector<T> | undefined,
@@ -158,6 +155,7 @@ export default class Collection<
   private static collections: Collection<any, any>[] = []
   private static debugMode = false
   private static staticBatchOperationsInProgress = 0
+  private static postBatchCallbacks: (() => void)[] = []
   private static fieldTracking = false
   private static onCreationCallbacks: ((collection: Collection<any>) => void)[] = []
   private static onDisposeCallbacks: ((collection: Collection<any>) => void)[] = []
@@ -209,13 +207,26 @@ export default class Collection<
       Collection.staticEvents.emit('static.batch.start')
     }
     Collection.staticBatchOperationsInProgress++
-    const result = Collection.collections.reduce((memo, collection) => () =>
-      collection.batch(() => memo()), callback)()
-    Collection.staticBatchOperationsInProgress--
-    if (Collection.staticBatchOperationsInProgress === 0) {
-      Collection.staticEvents.emit('static.batch.end')
+
+    try {
+      return callback()
+    } finally {
+      Collection.staticBatchOperationsInProgress--
+
+      // Rebuild indices after the last nested batch operation completes
+      if (Collection.staticBatchOperationsInProgress === 0) {
+        // rebuild indices as they are not rebuilt during batch operations
+        Collection.collections.forEach(
+          collection => collection.indicesOutdated ? collection.rebuildAllIndices() : null)
+
+        // execute all post batch callbacks
+        const executableCallbacks = Collection.postBatchCallbacks.splice(0)
+        executableCallbacks.forEach(callback_ => callback_())
+
+        // emit batch end event
+        Collection.staticEvents.emit('static.batch.end')
+      }
     }
-    return result
   }
 
   public readonly name: string
@@ -227,9 +238,7 @@ export default class Collection<
   private indicesOutdated = false
   private idIndex = new Map<string | undefined | null, Set<number>>()
   private debugMode
-  private batchOperationsInProgress = 0
   private isDisposed = false
-  private postBatchCallbacks = new Set<() => void>()
   private fieldTracking = false
   private persistenceReadyPromise: Promise<void>
 
@@ -524,7 +533,7 @@ export default class Collection<
 
   private rebuildIndices() {
     this.indicesOutdated = true
-    if (this.batchOperationsInProgress !== 0) return
+    if (Collection.staticBatchOperationsInProgress !== 0) return
     this.rebuildAllIndices()
   }
 
@@ -589,7 +598,7 @@ export default class Collection<
     this.idIndex.delete(serializeValue(id))
 
     // offset all indices after the deleted item -1, but only during batch operations
-    if (this.batchOperationsInProgress === 0) return
+    if (Collection.staticBatchOperationsInProgress === 0) return
     this.idIndex.forEach(([currenIndex], key) => {
       if (currenIndex > index) {
         this.idIndex.set(key, new Set([currenIndex - 1]))
@@ -679,8 +688,8 @@ export default class Collection<
       transformAll: this.transformAll.bind(this),
       bindEvents: (requery) => {
         const handleRequery = () => {
-          if (this.batchOperationsInProgress !== 0) {
-            this.postBatchCallbacks.add(requery)
+          if (Collection.staticBatchOperationsInProgress !== 0) {
+            Collection.postBatchCallbacks.push(requery)
             return
           }
           requery()
@@ -733,32 +742,7 @@ export default class Collection<
    * @returns The result of the batch operation callback.
    */
   public batch<TReturn>(callback: () => TReturn): TReturn {
-    if (this.batchOperationsInProgress === 0) {
-      this.emit('batch.start')
-    }
-    this.batchOperationsInProgress++
-
-    let result: TReturn
-    try {
-      result = callback()
-    } finally {
-      this.batchOperationsInProgress--
-
-      // Rebuild indices after the last nested batch operation completes
-      if (this.batchOperationsInProgress === 0) {
-      // rebuild indices as they are not rebuilt during batch operations
-        this.rebuildAllIndices()
-
-        // execute all post batch callbacks
-        this.postBatchCallbacks.forEach(callback_ => callback_())
-        this.postBatchCallbacks.clear()
-
-        // emit batch end event
-        this.emit('batch.end')
-      }
-    }
-
-    return result
+    return Collection.batch(callback)
   }
 
   /**
