@@ -1,7 +1,5 @@
 // original from https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/meteor/mongo.d.ts
 
-import type { Criteria } from 'mingo/types/types'
-
 export interface FieldExpression<T> {
   $eq?: T,
   $gt?: T,
@@ -54,7 +52,9 @@ export type GetType<T, P extends string>
       ? T[P]
       : never
 
-type FlatQuery<T> = Criteria<T>
+type FlatQuery<T> = {
+  [P in keyof T & string]?: FlatQueryValue<T, P>
+}
 
 type FieldValue<U> = U extends string
   ? string | RegExp | FieldExpression<string>
