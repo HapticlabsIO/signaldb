@@ -3,7 +3,7 @@ import type Selector from './Selector'
 import type { FieldExpression, FlatSelector } from './Selector'
 
 interface TestUser {
-  name: string,
+  name: string | number,
   age: number,
   tags: string[],
   address: {
@@ -26,7 +26,7 @@ interface TestUser {
 
 it('should allow basic field queries', () => {
   expectTypeOf<Selector<TestUser>>().toExtend<{
-    name?: string | RegExp | FieldExpression<string>,
+    name?: string | number | FieldExpression<string | number> | RegExp,
     age?: number | FieldExpression<number>,
   }>()
 })
@@ -35,6 +35,16 @@ it('should allow nested object queries', () => {
   expectTypeOf<Selector<TestUser>>().toExtend<{
     'address.street'?: string | RegExp | FieldExpression<string>,
     'address.city'?: string | RegExp | FieldExpression<string>,
+  }>()
+})
+
+it('should allow union types for fields', () => {
+  expectTypeOf<Selector<{ status: 'active' | 'inactive' }>>().toExtend<{
+    status?: 'active' | 'inactive' | FieldExpression<'active' | 'inactive'>,
+  }>()
+  expectTypeOf<FieldExpression<'active' | 'inactive'>>().toExtend<{
+    $eq?: 'active' | 'inactive',
+    $in?: ('active' | 'inactive')[],
   }>()
 })
 
