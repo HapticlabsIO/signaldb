@@ -56,9 +56,9 @@ type FlatQuery<T> = {
   [P in keyof T & string]?: FlatQueryValue<T, P>
 }
 
-type FieldValue<U> = (U | FieldExpression<U>) & (U extends string
+type FieldValue<U> = (U | FieldExpression<U>) | (U extends string
   ? RegExp
-  : unknown)
+  : never)
 
 type FlatQueryValue<T, P extends string> = GetType<T, P> extends never
   ? never
