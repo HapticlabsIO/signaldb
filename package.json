@@ -29,8 +29,10 @@
     "packages/history/*",
     "packages/sync-adapters/*"
   ],
+  "optionalDependencies": {
+    "@codecov/bundle-analyzer": "^1.9.1"
+  },
   "devDependencies": {
-    "@codecov/bundle-analyzer": "^1.9.1",
     "@commitlint/cli": "20.4.3",
     "@commitlint/config-conventional": "20.4.3",
     "@rollup/plugin-typescript": "12.3.0",
