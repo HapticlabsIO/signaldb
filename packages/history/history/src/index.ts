@@ -12,15 +12,17 @@ interface UndoRedoable {
 
 class InsertOperation<T extends BaseItem<I>, I> implements UndoRedoable {
   private item: T
-  private collection: Collection<T, I>
 
-  public constructor(item: T, collection: Collection<T, I>) {
+  public constructor(
+    item: T,
+    private collection: Collection<T, I>,
+    private overrides: () => Partial<T> = () => ({}),
+  ) {
     this.item = { ...item }
-    this.collection = collection
   }
 
   public forward(): void {
-    this.collection.insert(this.item)
+    this.collection.insert({ ...this.item, ...this.overrides() })
   }
 
   public backward(): void {
@@ -36,23 +38,26 @@ class UpdateOperation<
 > implements UndoRedoable {
   private before: T
   private after: T
-  private collection: Collection<T, I, any>
 
-  public constructor(before: T, after: T, collection: Collection<T, I, any>) {
+  public constructor(
+    before: T,
+    after: T,
+    private collection: Collection<T, I, any>,
+    private overrides: () => Partial<T> = () => ({}),
+  ) {
     this.before = { ...before }
     this.after = { ...after }
-    this.collection = collection
   }
 
   public forward(): void {
     this.collection.updateOne({ id: this.before.id } as Selector<T>, {
-      $set: this.after,
+      $set: { ...this.after, ...this.overrides() },
     })
   }
 
   public backward(): void {
     this.collection.updateOne({ id: this.after.id } as Selector<T>, {
-      $set: this.before,
+      $set: { ...this.before, ...this.overrides() },
     })
   }
 }
@@ -69,7 +74,7 @@ class RemoveOperation<T extends BaseItem<I> = BaseItem, I = any>
   }
 }
 
-class BatchUpdate<T extends { id: unknown }> {
+export class BatchUpdate<T extends { id: unknown }> {
   private batchedColumns: Set<keyof T>
   private state?: {
     before: T,
@@ -84,6 +89,7 @@ class BatchUpdate<T extends { id: unknown }> {
     columns: (keyof T)[],
     push: (operation: UndoRedoable) => void,
     unregisterSelf: () => void,
+    private overrides: () => Partial<T> = () => ({}),
   ) {
     this.batchedColumns = new Set(columns)
     this.push = push
@@ -130,7 +136,12 @@ class BatchUpdate<T extends { id: unknown }> {
       return
     }
 
-    this.push(new UpdateOperation(beforeWithoutBatched, afterWithoutBatched, collection))
+    this.push(new UpdateOperation(
+      beforeWithoutBatched,
+      afterWithoutBatched,
+      collection,
+      this.overrides,
+    ))
   }
 
   public commitAndUnregister(): void {
@@ -140,6 +151,7 @@ class BatchUpdate<T extends { id: unknown }> {
           this.state.before,
           this.state.after,
           this.state.collection,
+          this.overrides,
         ),
       )
     }
@@ -148,24 +160,19 @@ class BatchUpdate<T extends { id: unknown }> {
 }
 
 class HistoryRegisteredCollection<TItem extends { id: unknown }> {
-  protected readonly collection: Collection<TItem, TItem['id']>
-  protected readonly history: {
-    startCollectionBatch(): void,
-    endCollectionBatch(): void,
-    pushToBatch(operation: UndoRedoable): void,
-  }
-
   protected pauseDepth: number = 0
   protected removeListeners: () => void
   protected batchUpdateMap: Map<TItem['id'], BatchUpdate<TItem>> = new Map()
 
   public constructor(
-    collection: Collection<TItem, TItem['id']>,
-    history: typeof this.history,
+    protected readonly collection: Collection<TItem, TItem['id']>,
+    protected readonly history: {
+      startCollectionBatch(): void,
+      endCollectionBatch(): void,
+      pushToBatch(operation: UndoRedoable): void,
+    },
+    protected readonly overrides: () => Partial<TItem> = () => ({}),
   ) {
-    this.collection = collection
-    this.history = history
-
     const addedListener = this.onAdded.bind(this)
     const changedListener = this.onChanged.bind(this)
     const removedListener = this.onRemoved.bind(this)
@@ -225,7 +232,7 @@ class HistoryRegisteredCollection<TItem extends { id: unknown }> {
     if (this.pauseDepth !== 0) {
       return
     }
-    this.history.pushToBatch(new InsertOperation(item, this.collection))
+    this.history.pushToBatch(new InsertOperation(item, this.collection, this.overrides))
   }
 
   protected onChanged(newItem: TItem, change: any, oldItem: TItem): void {
@@ -240,7 +247,7 @@ class HistoryRegisteredCollection<TItem extends { id: unknown }> {
     }
 
     this.history.pushToBatch(
-      new UpdateOperation(oldItem, newItem, this.collection),
+      new UpdateOperation(oldItem, newItem, this.collection, this.overrides),
     )
   }
 
@@ -249,7 +256,7 @@ class HistoryRegisteredCollection<TItem extends { id: unknown }> {
     if (this.pauseDepth !== 0) {
       return
     }
-    this.history.pushToBatch(new RemoveOperation(item, this.collection))
+    this.history.pushToBatch(new RemoveOperation(item, this.collection, this.overrides))
   }
 
   public startBatch(
@@ -267,6 +274,7 @@ class HistoryRegisteredCollection<TItem extends { id: unknown }> {
       columns,
       this.history.pushToBatch.bind(this.history),
       () => this.batchUpdateMap.delete(id),
+      this.overrides,
     )
 
     this.batchUpdateMap.set(id, batch)
@@ -342,12 +350,13 @@ export class SignalDBHistory {
 
   public addCollection<TItem extends { id: unknown }>(
     collection: Collection<TItem, TItem['id']>,
+    overrides: () => Partial<TItem> = () => ({}),
   ): HistoryRegisteredCollection<TItem> {
     return new HistoryRegisteredCollection(collection, {
       startCollectionBatch: this.startCollectionBatch.bind(this),
       endCollectionBatch: this.endCollectionBatch.bind(this),
       pushToBatch: this.pushToBatch.bind(this),
-    })
+    }, overrides)
   }
 
   private startGlobalBatch(): void {

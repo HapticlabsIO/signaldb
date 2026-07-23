@@ -22,13 +22,15 @@ function createCollection() {
  * Registers a collection with the history manager for the test.
  * @param history The history instance under test.
  * @param collection The collection to register.
+ * @param overrides
  * @returns The registered collection wrapper.
  */
 function registerCollection(
   history: SignalDBHistory,
   collection: Collection<TestItem, number>,
+  overrides?: () => Partial<TestItem>,
 ) {
-  return history.addCollection(collection)
+  return history.addCollection(collection, overrides)
 }
 
 describe('SignalDBHistory', () => {
@@ -73,6 +75,29 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 1 })).toBeUndefined()
   })
 
+  it('should apply overrides when redoing inserts and undoing removals', () => {
+    const overriddenHistory = new SignalDBHistory(10)
+    const overriddenCollection = createCollection()
+    overriddenHistory.addCollection(overriddenCollection, () => ({ status: 'synced' }))
+
+    overriddenCollection.insert({ id: 1, value: 'a', status: 'draft' })
+    overriddenHistory.undo()
+    overriddenHistory.redo()
+
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+
+    overriddenCollection.removeOne({ id: 1 })
+    overriddenHistory.undo()
+
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+  })
+
   it('should handle batch operations', () => {
     Collection.batch(() => {
       collection.insert({ id: 2, value: 'x' })
@@ -86,6 +111,27 @@ describe('SignalDBHistory', () => {
     history.redo()
     expect(collection.findOne({ id: 2 })?.value).toBe('x')
     expect(collection.findOne({ id: 3 })?.value).toBe('y')
+  })
+
+  it('should apply overrides when undoing and redoing updates', () => {
+    const overriddenHistory = new SignalDBHistory(10)
+    const overriddenCollection = createCollection()
+    overriddenHistory.addCollection(overriddenCollection, () => ({ status: 'synced' }))
+
+    overriddenCollection.insert({ id: 1, value: 'a', status: 'draft' })
+    overriddenCollection.updateOne({ id: 1 }, { $set: { value: 'b', status: 'pending' } })
+
+    overriddenHistory.undo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+
+    overriddenHistory.redo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'b',
+      status: 'synced',
+    })
   })
 
   it('should not exceed max history length', () => {
@@ -311,6 +357,37 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 1 })).toMatchObject({
       value: 'a',
       status: 'draft',
+    })
+  })
+
+  it('should apply overrides to batched updates during undo and redo', () => {
+    const overriddenHistory = new SignalDBHistory(10)
+    const overriddenCollection = createCollection()
+    const overriddenRegisteredCollection = registerCollection(
+      overriddenHistory,
+      overriddenCollection,
+      () => ({ status: 'synced' }),
+    )
+
+    overriddenCollection.insert({ id: 1, value: 'a', status: 'draft' })
+
+    const batch = overriddenRegisteredCollection.startBatch(1, ['value'])
+
+    overriddenCollection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    overriddenCollection.updateOne({ id: 1 }, { $set: { value: 'c' } })
+
+    batch.commitAndUnregister()
+
+    overriddenHistory.undo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+
+    overriddenHistory.redo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'c',
+      status: 'synced',
     })
   })
 
