@@ -159,7 +159,7 @@ export class BatchUpdate<T extends { id: unknown }> {
   }
 }
 
-class HistoryRegisteredCollection<TItem extends { id: unknown }> {
+export class HistoryRegisteredCollection<TItem extends { id: unknown }> {
   protected pauseDepth: number = 0
   protected removeListeners: () => void
   protected batchUpdateMap: Map<TItem['id'], BatchUpdate<TItem>> = new Map()
