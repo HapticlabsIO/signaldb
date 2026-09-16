@@ -53,12 +53,12 @@ export type GetType<T, P extends string>
       : never
 
 type FlatQuery<T> = {
-  [P in DotNotation<T>]?: FlatQueryValue<T, P>
+  [P in keyof T & string]?: FlatQueryValue<T, P>
 }
 
-type FieldValue<U> = U extends string
-  ? string | RegExp | FieldExpression<string>
-  : U | FieldExpression<U>
+type FieldValue<U> = (U | FieldExpression<U>) | (U extends string
+  ? RegExp
+  : never)
 
 type FlatQueryValue<T, P extends string> = GetType<T, P> extends never
   ? never

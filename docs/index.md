@@ -19,18 +19,18 @@ head:
     content: SignalDB - Reactive Local-First JavaScript Database
 - - meta
   - name: og:description
-    content: SignalDB is a reactive, local-first JavaScript database with real-time sync, Optimistic UI and signal-based reactivity.
+    content: SignalDB is a reactive, local-first JavaScript database with Optimistic UI, signal-based reactivity and a built-in undo/redo history.
 - - meta
   - name: description
-    content: SignalDB is a reactive, local-first JavaScript database with real-time sync, Optimistic UI and signal-based reactivity
+    content: SignalDB is a reactive, local-first JavaScript database with Optimistic UI, signal-based reactivity and a built-in undo/redo history
 - - meta
   - name: keywords
-    content: signaldb, local first, real time, live updates, MongoDB-like, sync, reactive, JavaScript, TypeScript, database, Angular, Solid.js, React, Vue, Svelte, GraphQL, REST API, optimistic UI, framework agnostic, adapters, signals, schema-less
+    content: signaldb, local first, live updates, MongoDB-like, reactive, JavaScript, TypeScript, database, optimistic UI, framework agnostic, signals, schema-less, undo redo, history
 
 hero:
   name: SignalDB
   text: Reactive Local-First JavaScript Database
-  tagline: Signals for instant UI updates, plus real-time sync when you need it.
+  tagline: Signals for instant UI updates, with a built-in undo/redo history.
   image:
     src: /logo.svg
     alt: SignalDB Logo
@@ -46,15 +46,7 @@ features:
   - icon: ⚡️
     title: Signal-Based Reactivity
     link: /reactivity/
-    details: SignalDB is a <strong>reactive JavaScript database</strong> powered by signals for instant UI updates. Works with any framework, with adapters for <a href="/guides/angular/">Angular</a>, <a href="/guides/solid-js/">Solid.js</a>, <a href="/guides/react/">React</a>, <a href="/guides/vue/">Vue</a>, and more.
-  - icon: 📍
-    title: Local-First
-    link: /sync/#local-first-synchronization
-    details: A <strong>local-first database</strong> that keeps apps fast and usable offline. Data syncs automatically when you’re back online for a smooth offline-first experience.
-  - icon: 🔄
-    title: Real-Time Synchronization
-    link: /sync/
-    details: Built-in <strong>real-time sync</strong> keeps data consistent across clients and servers. Includes conflict handling for reliable collaborative and multi-device apps.
+    details: SignalDB is a <strong>reactive JavaScript database</strong> powered by signals for instant UI updates. Bring your own reactivity library via <a href="/reference/core/createreactivityadapter/">createReactivityAdapter</a>.
   - icon: 👌
     title: Developer Friendly
     link: /core-concepts/
@@ -62,19 +54,13 @@ features:
   - icon: ✨
     title: Optimistic UI
     link: /core-concepts/#optimistic-ui
-    details: Ship snappy apps with <strong>optimistic UI</strong>—updates render instantly while sync runs in the background.
-  - icon: 🛠️
-    title: Developer Tools
-    link: /devtools/
-    details: Use <strong>devtools</strong> to inspect queries, changes, and performance in real time. Debug faster and spot bottlenecks early.
-  - icon: 🔌
-    title: Backend Agnostic
-    link: /sync/#syncing-with-any-backend
-    details: Sync works with REST, GraphQL, or custom APIs. Plug into your existing server without rewrites.
+    details: Ship snappy apps with <strong>optimistic UI</strong>—updates render instantly, then get confirmed or rolled back.
+  - icon: ⏪
+    title: History &amp; Undo/Redo
+    link: /reference/core/collection/
+    details: Track changes to a collection and <strong>undo or redo</strong> them, individually or batched together.
   - icon: 💾
     title: Storage Adapters
     link: /data-persistence/
-    details: Persist data anywhere with flexible <strong>storage adapters</strong>. Includes support for <strong>IndexedDB</strong>, <strong>OPFS</strong>, and more.
+    details: Persist data anywhere with flexible <strong>storage adapters</strong>. Implement your own via <a href="/reference/core/createpersistenceadapter/">createPersistenceAdapter</a>.
 ---
-
-<SyncExample />

@@ -55,31 +55,8 @@ Also check out the [core concepts about reactivity](/core-concepts/#signals-and-
 
 ## Reactivity Libraries
 
-We provide prebuilt reactivity adapters for existing reactivity libraries. If an adapter is missing, feel free to request it by [opening an issue at Github](https://github.com/maxnowack/signaldb/issues/new) or write one at your own. See [createReactivityAdapter](/reference/core/createreactivityadapter/) for more information.
+This package no longer ships prebuilt reactivity adapters. To integrate SignalDB with your reactivity library of choice (signals, MobX, framework-specific reactivity, etc.), implement your own adapter with [createReactivityAdapter](/reference/core/createreactivityadapter/).
 
-For some libraries, it wasn't possible to implement a [`onDispose`](/reference/core/createreactivityadapter/#ondispose-callback-void-dependency-dependency-optional) method in the adapter. That means that you have to [cleanup the cursor](/reference/core/cursor/) manually after the reactive context was closed. There are examples on the specific adapter documentation pages. Make sure that you implement it properly, since not doing this can lead to memory leaks.
+For some libraries, it isn't possible to implement an [`onDispose`](/reference/core/createreactivityadapter/#ondispose-callback-void-dependency-dependency-optional) method in the adapter. That means that you have to [cleanup the cursor](/reference/core/cursor/) manually after the reactive context was closed. Make sure that you implement it properly, since not doing this can lead to memory leaks.
 
-[Scope checking](/reference/core/createreactivityadapter/#isinscope-dependency-dependency-boolean-optional) is only supported by a few libraries. Scope checking means, that SignalDB is not able to check if a cursor was created from a reactive scope (([`find`](/reference/core/collection/#find-selector-selector-t-options-options)/[`findOne`](/reference/core/collection/#findone-selector-selector-t-options-options) called in an `effect` function)) and applies the required event handlers used to provide the reactivity. To avoid memory leaks, use an adapter with scope checking or pass `{ reactive: false }` to your options<br>(e.g. `<collection>.find({ … }, { reactive: false })`).
-
-| Library | Reactivity adapter | Automatic Cleanup | Scope check |
-|---|---|---|---|
-| [`@preact/signals-core`](/reference/preact/) | ✅ | ❌ | ❌ |
-| [`@reactively/core`](/reference/reactively/) | ✅ | ✅ | ❌ |
-| [`@webreflection/signal`](https://github.com/WebReflection/signal) | ❌ | - | - |
-| [`alien-signals`](https://github.com/maxnowack/signaldb/issues/1341) | ✅ | ❌ | ❌ |
-| [`Angular Signals`](/reference/angular/) | ✅ | ❌ | ❌ |
-| [`Maverick-js Signals`](/reference/maverickjs/) | ✅ | ✅ | ✅ |
-| [`Meteor Tracker`](/reference/meteor/) | ✅ | ✅ | ✅ |
-| [`MobX`](/reference/mobx/) | ✅ | ✅ | ❌ |
-| [`oby`](/reference/oby/) | ✅ | ✅ | ✅ |
-| [`Qwik`](https://qwik.dev/docs/components/state/) | ❌ | - | - |
-| [`S.js`](/reference/sjs/) | ✅ | ✅ | ❌ |
-| [`signal-polyfill`](https://github.com/proposal-signals/signal-polyfill) | ❌ | - | - |
-| [`signia`](https://signia.tldraw.dev/) | ❌ | - | - |
-| [`sinuous`](/reference/sinuous/) | ✅ | ✅ | ❌ |
-| [`Solid Signals`](/reference/solid/) | ✅ | ✅ | ❌ |
-| [`sprae`](https://github.com/dy/sprae) (see [#858](https://github.com/maxnowack/signaldb/issues/858)) | ✅ | ❌ | ❌ |
-| [`Svelte Runes`](/reference/svelte/) | ✅ | ✅ | ✅ |
-| [`ulive`](https://github.com/kethan/ulive) | ❌ | - | - |
-| [`usignal`](/reference/usignal/) | ✅ | ❌ | ❌ |
-| [`Vue.js refs`](/reference/vue/) | ✅ | ❌ | ❌ |
+[Scope checking](/reference/core/createreactivityadapter/#isinscope-dependency-dependency-boolean-optional) is only supported by some reactivity implementations. Scope checking means, that SignalDB is not able to check if a cursor was created from a reactive scope (([`find`](/reference/core/collection/#find-selector-selector-t-options-options)/[`findOne`](/reference/core/collection/#findone-selector-selector-t-options-options) called in an `effect` function)) and applies the required event handlers used to provide the reactivity. To avoid memory leaks, use an adapter with scope checking or pass `{ reactive: false }` to your options<br>(e.g. `<collection>.find({ … }, { reactive: false })`).

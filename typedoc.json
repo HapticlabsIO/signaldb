@@ -1,10 +1,6 @@
 {
    "plugin": [],
    "entryPoints": [
-     "packages/base/core",
-     "packages/integrations/*",
-     "packages/reactivity-adapters/*",
-     "packages/persistence-adapters/*",
      "packages/base/*",
    ],
    "entryPointStrategy": "packages",

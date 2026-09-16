@@ -1,4 +1,9 @@
-import { Collection, type Selector, type BaseItem } from '@signaldb/core'
+import {
+  Collection,
+  type Selector,
+  type BaseItem,
+  isEqual,
+} from '@signaldb/core'
 
 interface UndoRedoable {
   forward(): void,
@@ -7,15 +12,17 @@ interface UndoRedoable {
 
 class InsertOperation<T extends BaseItem<I>, I> implements UndoRedoable {
   private item: T
-  private collection: Collection<T, I>
 
-  public constructor(item: T, collection: Collection<T, I>) {
+  public constructor(
+    item: T,
+    private collection: Collection<T, I>,
+    private overrides: () => Partial<T> = () => ({}),
+  ) {
     this.item = { ...item }
-    this.collection = collection
   }
 
   public forward(): void {
-    this.collection.insert(this.item)
+    this.collection.insert({ ...this.item, ...this.overrides() })
   }
 
   public backward(): void {
@@ -31,30 +38,27 @@ class UpdateOperation<
 > implements UndoRedoable {
   private before: T
   private after: T
-  private collection: Collection<T, I, any>
 
-  public constructor(before: T, after: T, collection: Collection<T, I, any>) {
+  public constructor(
+    before: T,
+    after: T,
+    private collection: Collection<T, I, any>,
+    private overrides: () => Partial<T> = () => ({}),
+  ) {
     this.before = { ...before }
     this.after = { ...after }
-    this.collection = collection
   }
 
   public forward(): void {
-    this.collection.updateOne(
-      { id: this.before.id } as Selector<T>,
-      {
-        $set: this.after,
-      },
-    )
+    this.collection.updateOne({ id: this.before.id } as Selector<T>, {
+      $set: { ...this.after, ...this.overrides() },
+    })
   }
 
   public backward(): void {
-    this.collection.updateOne(
-      { id: this.after.id } as Selector<T>,
-      {
-        $set: this.before,
-      },
-    )
+    this.collection.updateOne({ id: this.after.id } as Selector<T>, {
+      $set: { ...this.before, ...this.overrides() },
+    })
   }
 }
 
@@ -70,14 +74,211 @@ class RemoveOperation<T extends BaseItem<I> = BaseItem, I = any>
   }
 }
 
+export class BatchUpdate<T extends { id: unknown }> {
+  private batchedColumns: Set<keyof T>
+  private state?: {
+    before: T,
+    after: T,
+    collection: Collection<T, T['id'], any>,
+  } = undefined
+
+  private push: (operation: UndoRedoable) => void
+  private unregisterSelf: () => void
+
+  public constructor(
+    columns: (keyof T)[],
+    push: (operation: UndoRedoable) => void,
+    unregisterSelf: () => void,
+    private overrides: () => Partial<T> = () => ({}),
+  ) {
+    this.batchedColumns = new Set(columns)
+    this.push = push
+    this.unregisterSelf = unregisterSelf
+  }
+
+  public update(before: T, after: T, collection: Collection<T, T['id']>): void {
+    let currentState = this.state
+    if (!currentState) {
+      currentState = {
+        before: { ...before },
+        after: { ...before },
+        collection,
+      }
+      this.state = currentState
+    }
+
+    // Update the before state
+    const updatedBefore = { ...after }
+    // Preserve the batched columns from the original before state
+    this.batchedColumns.forEach((column) => {
+      updatedBefore[column] = currentState.before[column]
+    })
+
+    // Update the current state
+    currentState.before = { ...updatedBefore }
+    currentState.after = { ...updatedBefore }
+
+    // Update the batched columns in the after state
+    this.batchedColumns.forEach((column) => {
+      currentState.after[column] = after[column]
+    })
+
+    // Filter out the changes to the batched columns for the operation
+    const afterWithoutBatched = { ...after }
+    const beforeWithoutBatched = { ...before }
+    this.batchedColumns.forEach((column) => {
+      beforeWithoutBatched[column] = currentState.before[column]
+      afterWithoutBatched[column] = currentState.before[column]
+    })
+
+    if (isEqual(beforeWithoutBatched, afterWithoutBatched)) {
+      // No changes outside of the batched columns, don't push an operation
+      return
+    }
+
+    this.push(new UpdateOperation(
+      beforeWithoutBatched,
+      afterWithoutBatched,
+      collection,
+      this.overrides,
+    ))
+  }
+
+  public commitAndUnregister(): void {
+    if (this.state) {
+      this.push(
+        new UpdateOperation(
+          this.state.before,
+          this.state.after,
+          this.state.collection,
+          this.overrides,
+        ),
+      )
+    }
+    this.unregisterSelf()
+  }
+}
+
+export class HistoryRegisteredCollection<TItem extends { id: unknown }> {
+  protected pauseDepth: number = 0
+  protected removeListeners: () => void
+  protected batchUpdateMap: Map<TItem['id'], BatchUpdate<TItem>> = new Map()
+
+  public constructor(
+    protected readonly collection: Collection<TItem, TItem['id']>,
+    protected readonly history: {
+      pushToBatch(operation: UndoRedoable): void,
+    },
+    protected readonly overrides: () => Partial<TItem> = () => ({}),
+  ) {
+    const addedListener = this.onAdded.bind(this)
+    const changedListener = this.onChanged.bind(this)
+    const removedListener = this.onRemoved.bind(this)
+
+    collection.on('added', addedListener)
+    collection.on('changed', changedListener)
+    collection.on('removed', removedListener)
+
+    this.removeListeners = () => {
+      collection.off('added', addedListener)
+      collection.off('changed', changedListener)
+      collection.off('removed', removedListener)
+    }
+  }
+
+  public destructor() {
+    this.removeListeners()
+  }
+
+  public pause(): () => void {
+    this.pauseDepth++
+    return () => {
+      this.pauseDepth--
+    }
+  }
+
+  public doPaused<T>(fn: () => T): T {
+    const unPause = this.pause()
+
+    try {
+      return fn()
+    } finally {
+      unPause()
+    }
+  }
+
+  public async doPausedAsync<T>(fn: () => Promise<T>): Promise<T> {
+    const unPause = this.pause()
+
+    try {
+      return await fn()
+    } finally {
+      unPause()
+    }
+  }
+
+  protected onAdded(item: TItem): void {
+    // Ignore events while paused
+    if (this.pauseDepth !== 0) {
+      return
+    }
+    this.history.pushToBatch(new InsertOperation(item, this.collection, this.overrides))
+  }
+
+  protected onChanged(newItem: TItem, change: any, oldItem: TItem): void {
+    // Ignore events while paused
+    if (this.pauseDepth !== 0) {
+      return
+    }
+    const batch = this.batchUpdateMap.get(newItem.id)
+    if (batch) {
+      batch.update(oldItem, newItem, this.collection)
+      return
+    }
+
+    this.history.pushToBatch(
+      new UpdateOperation(oldItem, newItem, this.collection, this.overrides),
+    )
+  }
+
+  protected onRemoved(item: TItem): void {
+    // Ignore events while paused
+    if (this.pauseDepth !== 0) {
+      return
+    }
+    this.history.pushToBatch(new RemoveOperation(item, this.collection, this.overrides))
+  }
+
+  public startBatch(
+    id: TItem['id'],
+    columns: (keyof TItem)[],
+  ): BatchUpdate<TItem> {
+    const existingBatch = this.batchUpdateMap.get(id)
+    if (existingBatch) {
+      // eslint-disable-next-line no-console
+      console.error('Batch for item is already started.')
+      return existingBatch
+    }
+
+    const batch = new BatchUpdate(
+      columns,
+      this.history.pushToBatch.bind(this.history),
+      () => this.batchUpdateMap.delete(id),
+      this.overrides,
+    )
+
+    this.batchUpdateMap.set(id, batch)
+    return batch
+  }
+}
+
 export class SignalDBHistory {
   private history: UndoRedoable[][] = []
 
-  private isGlobalBatchRunning = false
-  private isCollectionBatchRunning = false
+  private activeGlobalBatchCount = 0
   private currentBatch: UndoRedoable[] = []
 
-  private pauseDepth = 0
+  private globalPauseDepth = 0
 
   private undoneSteps = 0
   private isUndoingOrRedoing = false
@@ -85,7 +286,6 @@ export class SignalDBHistory {
 
   // Destruction support
   private removeStaticListeners: () => void
-  private removeCollectionListeners: (() => void)[] = []
 
   public constructor(maxHistoryLength = 100) {
     this.maxHistoryLength = maxHistoryLength
@@ -103,96 +303,59 @@ export class SignalDBHistory {
   }
 
   public doPaused<T>(fn: () => T): T {
-    this.pauseDepth++
+    this.pauseAll()
     try {
       return fn()
     } finally {
-      this.pauseDepth--
+      this.resumeAll()
     }
   }
 
   public async doPausedAsync<T>(fn: () => Promise<T>): Promise<T> {
-    this.pauseDepth++
+    this.pauseAll()
     try {
       return await fn()
     } finally {
-      this.pauseDepth--
+      this.resumeAll()
     }
+  }
+
+  public pauseAll(): void {
+    this.globalPauseDepth++
+  }
+
+  public resumeAll(): void {
+    if (this.globalPauseDepth === 0) {
+      // eslint-disable-next-line no-console
+      console.error('Cannot resume all, not currently paused.')
+      return
+    }
+    this.globalPauseDepth--
   }
 
   public destroy(): void {
-    for (let i = 0; i < this.removeCollectionListeners.length; i++) {
-      this.removeCollectionListeners[i]()
-    }
     this.removeStaticListeners()
   }
 
-  public addCollection(collection: Collection<BaseItem, any, any>): void {
-    const addedListener = (item: BaseItem) => {
-      this.pushToBatch(new InsertOperation(item, collection))
-    }
-    const changedListener = (
-      newItem: BaseItem,
-      change: any,
-      oldItem: BaseItem,
-    ) => {
-      this.pushToBatch(new UpdateOperation(oldItem, newItem, collection))
-    }
-    const removedListener = (item: BaseItem) => {
-      this.pushToBatch(new RemoveOperation(item, collection))
-    }
-    const batchStartListener = this.startCollectionBatch.bind(this)
-    const batchEndListener = this.endCollectionBatch.bind(this)
-
-    collection.on('added', addedListener)
-    collection.on('changed', changedListener)
-    collection.on('removed', removedListener)
-    collection.on('batch.start', batchStartListener)
-    collection.on('batch.end', batchEndListener)
-
-    this.removeCollectionListeners.push(() => {
-      collection.off('added', addedListener)
-      collection.off('changed', changedListener)
-      collection.off('removed', removedListener)
-      collection.off('batch.start', batchStartListener)
-      collection.off('batch.end', batchEndListener)
-    })
+  public addCollection<TItem extends { id: unknown }>(
+    collection: Collection<TItem, TItem['id']>,
+    overrides: () => Partial<TItem> = () => ({}),
+  ): HistoryRegisteredCollection<TItem> {
+    return new HistoryRegisteredCollection(collection, {
+      pushToBatch: this.pushToBatch.bind(this),
+    }, overrides)
   }
 
   private startGlobalBatch(): void {
-    if (this.isGlobalBatchRunning) {
-      throw new Error(
-        'Cannot start a global batch while another batch is still open.',
-      )
-    }
-    this.isGlobalBatchRunning = true
+    this.activeGlobalBatchCount++
   }
 
   private endGlobalBatch(): void {
-    if (this.isCollectionBatchRunning) {
-      throw new Error(
-        'Cannot end global batch while a collection batch is still open.',
-      )
+    if (this.activeGlobalBatchCount <= 0) {
+      throw new Error('Cannot end global batch while none is  open.')
     }
-    this.isGlobalBatchRunning = false
-    this.commitBatch()
-  }
-
-  private startCollectionBatch(): void {
-    if (this.isCollectionBatchRunning) {
-      throw new Error(
-        'Cannot start a collection batch while another batch is still open.',
-      )
-    }
-    this.isCollectionBatchRunning = true
-  }
-
-  private endCollectionBatch(): void {
-    if (!this.isCollectionBatchRunning) {
-      throw new Error('Cannot end a collection batch while no batch is open.')
-    }
-    this.isCollectionBatchRunning = false
-    if (!this.isGlobalBatchRunning) {
+    this.activeGlobalBatchCount--
+    if (this.activeGlobalBatchCount === 0) {
       this.commitBatch()
     }
   }
@@ -227,13 +390,13 @@ export class SignalDBHistory {
     }
 
     // Don't record operations while paused
-    if (this.pauseDepth > 0) {
+    if (this.globalPauseDepth !== 0) {
       return
     }
 
     this.currentBatch.push(operation)
 
-    if (!this.isGlobalBatchRunning && !this.isCollectionBatchRunning) {
+    if (!this.activeGlobalBatchCount) {
       // No batch, immediately commit
       this.commitBatch()
     }

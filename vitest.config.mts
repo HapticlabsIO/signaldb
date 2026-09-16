@@ -10,6 +10,7 @@ export default defineConfig({
       'packages/persistence-adapters/*',
       'packages/reactivity-adapters/*',
       'packages/history/*',
+      'packages/sync-adapters/*',
     ],
     coverage: {
       provider: 'istanbul',

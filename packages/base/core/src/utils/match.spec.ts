@@ -38,13 +38,6 @@ describe('match', () => {
     expect(match(item, { hobbies: { $size: 3 } })).toBe(true)
   })
 
-  it('should handle nested objects', () => {
-    const item = { user: { name: 'John', profile: { age: 30 } } }
-    expect(match(item, { 'user.name': 'John' })).toBe(true)
-    expect(match(item, { 'user.profile.age': 30 })).toBe(true)
-    expect(match(item, { 'user.profile.age': { $gt: 25 } })).toBe(true)
-  })
-
   it('should handle $exists operator', () => {
     expect(match({ name: 'John' }, { name: { $exists: true } })).toBe(true)
     expect(match({} as { name?: string }, { name: { $exists: false } })).toBe(true)

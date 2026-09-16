@@ -14,17 +14,17 @@ head:
     content: Getting Started | SignalDB
 - - meta
   - name: og:description
-    content: Learn how to get started with SignalDB, a client-side, MongoDB-like database with real-time synchronization, TypeScript support, and blazing fast performance.
+    content: Learn how to get started with SignalDB, a client-side, MongoDB-like database with signal-based reactivity, TypeScript support, and blazing fast performance.
 - - meta
   - name: description
-    content: Learn how to get started with SignalDB, a client-side, MongoDB-like database with real-time synchronization, TypeScript support, and blazing fast performance.
+    content: Learn how to get started with SignalDB, a client-side, MongoDB-like database with signal-based reactivity, TypeScript support, and blazing fast performance.
 - - meta
   - name: keywords
-    content: getting started with SignalDB, SignalDB installation, MongoDB-like JavaScript database, TypeScript database, SignalDB collections, data persistence, local storage, real-time database, optimistic UI, JavaScript database, reactivity, frontend integration, reactive collections
+    content: getting started with SignalDB, SignalDB installation, MongoDB-like JavaScript database, TypeScript database, SignalDB collections, data persistence, optimistic UI, JavaScript database, reactivity, frontend integration, reactive collections
 ---
 # Getting Started
 
-Welcome to the Getting Started Guide for SignalDB, a local-first database with signal-based reactivity and real-time synchronization. This guide will help you understand the basics of SignalDB and get you up and running quickly.
+Welcome to the Getting Started Guide for SignalDB, a local-first database with signal-based reactivity. This guide will help you understand the basics of SignalDB and get you up and running quickly.
 
 SignalDB is designed for blazing fast query performance and data persistence, while remaining framework-agnostic.
 
@@ -46,14 +46,13 @@ import { Collection } from '@signaldb/core'
 const posts = new Collection()
 ```
 
-but normally you want to persist your data. Persistence in SignalDB is achieved by using [persistence adapters](/data-persistence/). Choose one that fits your needs and pass it to the collection constructor. Here is an example using [`@signaldb/localstorage`](/reference/localstorage/):
+but normally you want to persist your data. Persistence in SignalDB is achieved by using [persistence adapters](/data-persistence/). Build one that fits your needs with [`createPersistenceAdapter`](/reference/core/createpersistenceadapter/) and pass it to the collection constructor:
 
 ```js
 import { Collection } from '@signaldb/core'
-import createLocalStorageAdapter from '@signaldb/localstorage'
 
 const posts = new Collection({
-  persistence: createLocalStorageAdapter('posts'),
+  persistence: myPersistenceAdapter,
 })
 ```
 
@@ -87,13 +86,6 @@ You've finished the Getting Started Guide! The next steps are getting reactivity
 
 ## Next steps
 
-Now you know the basics about SignalDB. It's time to learn how to integrate it with the framework you're using.
-Take a look at our guides:
-- [Angular](/guides/angular/)
-- [React](/guides/react/)
-- [Solid](/guides/solid-js/)
-- [Svelte](/guides/svelte/)
-- [Vue](/guides/vue/)
+Now you know the basics about SignalDB. It's time to learn how to integrate it with the reactivity library you're using via [`createReactivityAdapter`](/reference/core/createreactivityadapter/).
 
-
-After that you might want to learn more about the [core concepts of SignalDB](/core-concepts/), how you can [query your data](/queries/) or how to [connect it to your backend](/sync/).
+After that you might want to learn more about the [core concepts of SignalDB](/core-concepts/) or how you can [query your data](/queries/).

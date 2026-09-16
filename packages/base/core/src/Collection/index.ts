@@ -44,8 +44,11 @@ interface StaticCollectionEvents {
 }
 
 interface CollectionEvents<T extends BaseItem, E extends BaseItem = T, U = E> {
+  'added.before': (item: T) => void,
   'added': (item: T) => void,
+  'changed.before': (item: T, modifier: Modifier<T>, itemBefore: T) => void,
   'changed': (itemAfter: T, modifier: Modifier<T>, itemBefore: T) => void,
+  'removed.before': (item: T) => void,
   'removed': (item: T) => void,
 
   'persistence.init': () => void,
@@ -59,9 +62,6 @@ interface CollectionEvents<T extends BaseItem, E extends BaseItem = T, U = E> {
 
   'observer.created': <O extends FindOptions<T>>(selector?: Selector<T>, options?: O) => void,
   'observer.disposed': <O extends FindOptions<T>>(selector?: Selector<T>, options?: O) => void,
-
-  'batch.start': () => void,
-  'batch.end': () => void,
 
   'getItems': (selector: Selector<T> | undefined) => void,
   'find': <O extends FindOptions<T>>(
@@ -155,6 +155,7 @@ export default class Collection<
   private static collections: Collection<any, any>[] = []
   private static debugMode = false
   private static staticBatchOperationsInProgress = 0
+  private static postBatchCallbacks: Set<() => void> = new Set()
   private static fieldTracking = false
   private static onCreationCallbacks: ((collection: Collection<any>) => void)[] = []
   private static onDisposeCallbacks: ((collection: Collection<any>) => void)[] = []
@@ -199,17 +200,35 @@ export default class Collection<
    * This improves performance by avoiding repetitive index recalculations and
    * provides atomicity for the batch of operations.
    * @param callback - The batch operation to execute.
+   * @returns The result of the batch operation callback.
    */
-  static batch(callback: () => void) {
+  static batch<TReturn>(callback: () => TReturn): TReturn {
     if (Collection.staticBatchOperationsInProgress === 0) {
       Collection.staticEvents.emit('static.batch.start')
     }
     Collection.staticBatchOperationsInProgress++
-    Collection.collections.reduce((memo, collection) => () =>
-      collection.batch(() => memo()), callback)()
-    Collection.staticBatchOperationsInProgress--
-    if (Collection.staticBatchOperationsInProgress === 0) {
-      Collection.staticEvents.emit('static.batch.end')
+
+    try {
+      return callback()
+    } finally {
+      Collection.staticBatchOperationsInProgress--
+
+      // Rebuild indices after the last nested batch operation completes
+      if (Collection.staticBatchOperationsInProgress === 0) {
+        try {
+          // rebuild indices as they are not rebuilt during batch operations
+          Collection.collections.forEach(
+            collection => collection.indicesOutdated ? collection.rebuildAllIndices() : null)
+
+          // execute all post batch callbacks
+          const executableCallbacks = [...Collection.postBatchCallbacks]
+          Collection.postBatchCallbacks.clear()
+          executableCallbacks.forEach(callback_ => callback_())
+        } finally {
+          // emit batch end event
+          Collection.staticEvents.emit('static.batch.end')
+        }
+      }
     }
   }
 
@@ -222,9 +241,7 @@ export default class Collection<
   private indicesOutdated = false
   private idIndex = new Map<string | undefined | null, Set<number>>()
   private debugMode
-  private batchOperationsInProgress = 0
   private isDisposed = false
-  private postBatchCallbacks = new Set<() => void>()
   private fieldTracking = false
   private persistenceReadyPromise: Promise<void>
 
@@ -519,7 +536,7 @@ export default class Collection<
 
   private rebuildIndices() {
     this.indicesOutdated = true
-    if (this.batchOperationsInProgress !== 0) return
+    if (Collection.staticBatchOperationsInProgress !== 0) return
     this.rebuildAllIndices()
   }
 
@@ -584,7 +601,7 @@ export default class Collection<
     this.idIndex.delete(serializeValue(id))
 
     // offset all indices after the deleted item -1, but only during batch operations
-    if (this.batchOperationsInProgress === 0) return
+    if (Collection.staticBatchOperationsInProgress === 0) return
     this.idIndex.forEach(([currenIndex], key) => {
       if (currenIndex > index) {
         this.idIndex.set(key, new Set([currenIndex - 1]))
@@ -674,8 +691,8 @@ export default class Collection<
       transformAll: this.transformAll.bind(this),
       bindEvents: (requery) => {
         const handleRequery = () => {
-          if (this.batchOperationsInProgress !== 0) {
-            this.postBatchCallbacks.add(requery)
+          if (Collection.staticBatchOperationsInProgress !== 0) {
+            Collection.postBatchCallbacks.add(requery)
             return
           }
           requery()
@@ -725,30 +742,10 @@ export default class Collection<
    * Performs a batch operation, deferring index rebuilds and allowing multiple
    * modifications to be made atomically. Executes any post-batch callbacks afterwards.
    * @param callback - The batch operation to execute.
+   * @returns The result of the batch operation callback.
    */
-  public batch(callback: () => void) {
-    if (this.batchOperationsInProgress === 0) {
-      this.emit('batch.start')
-    }
-    this.batchOperationsInProgress++
-    try {
-      callback()
-    } finally {
-      this.batchOperationsInProgress--
-    }
-
-    // Rebuild indices after the last nested batch operation completes
-    if (this.batchOperationsInProgress === 0) {
-      // rebuild indiices as they are not rebuilt during batch operations
-      this.rebuildAllIndices()
-
-      // execute all post batch callbacks
-      this.postBatchCallbacks.forEach(callback_ => callback_())
-      this.postBatchCallbacks.clear()
-
-      // emit batch end event
-      this.emit('batch.end')
-    }
+  public batch<TReturn>(callback: () => TReturn): TReturn {
+    return Collection.batch(callback)
   }
 
   /**
@@ -764,6 +761,7 @@ export default class Collection<
     const newItem = { id: primaryKeyGenerator(item), ...item } as T
     this.emit('validate', newItem)
     if (this.idIndex.has(serializeValue(newItem.id))) throw new Error('Item with same id already exists')
+    this.emit('added.before', newItem)
     this.memory().push(newItem)
     const itemIndex = this.memory().findIndex(document => document === newItem)
     this.idIndex.set(serializeValue(newItem.id), new Set([itemIndex]))
@@ -839,6 +837,7 @@ export default class Collection<
         throw new Error('Item with same id already exists')
       }
       this.emit('validate', modifiedItem)
+      this.emit('changed.before', modifiedItem, restModifier, item)
       this.memory().splice(index, 1, modifiedItem)
       this.rebuildIndices()
       this.emit('changed', modifiedItem, restModifier, item)
@@ -898,6 +897,9 @@ export default class Collection<
         index,
       }
     })
+    changes.forEach(({ item }, changeIndex) => {
+      this.emit('changed.before', item, restModifier, items[changeIndex])
+    })
     changes.forEach(({ item, index }) => {
       this.memory().splice(index, 1, item)
     })
@@ -944,6 +946,7 @@ export default class Collection<
       }
       const modifiedItem = { id: item.id, ...replacement } as T
       this.emit('validate', modifiedItem)
+      this.emit('changed.before', modifiedItem, replacement as Modifier<T>, item)
       this.memory().splice(index, 1, modifiedItem)
       this.rebuildIndices()
       this.emit('changed', modifiedItem, replacement as Modifier<T>, item)
@@ -965,6 +968,7 @@ export default class Collection<
     if (!selector) throw new Error('Invalid selector')
     const { item, index } = this.getItemAndIndex(selector)
     if (item != null) {
+      this.emit('removed.before', item)
       this.memory().splice(index, 1)
       this.deleteFromIdIndex(item.id, index)
       this.rebuildIndices()
@@ -985,6 +989,10 @@ export default class Collection<
     if (this.isDisposed) throw new Error('Collection is disposed')
     if (!selector) throw new Error('Invalid selector')
     const items = this.getItems(selector)
+
+    items.forEach((item) => {
+      this.emit('removed.before', item)
+    })
 
     items.forEach((item) => {
       const index = this.memory().findIndex(document => document === item)

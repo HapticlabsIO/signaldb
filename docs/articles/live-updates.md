@@ -116,7 +116,7 @@ SignalDB offers several distinct advantages for developers aiming to implement l
 
 ### Developer Efficiency
 
-- **Easy Integration with Existing Frameworks**: SignalDB provides adapters for popular frameworks such as [React](/guides/react/), Vue, and Angular, making it easy to integrate into existing projects without extensive modifications.
+- **Easy Integration with Existing Frameworks**: SignalDB is framework-agnostic and integrates with your reactivity library of choice via [`createReactivityAdapter`](/reference/core/createreactivityadapter/), making it easy to integrate into existing projects without extensive modifications.
 - **Simplified Data Management**: Developers can manage data with simple, MongoDB-like queries, which reduces the complexity typically associated with data handling in real-time scenarios. This simplification speeds up development and reduces the potential for errors.
 
 ### Scalability

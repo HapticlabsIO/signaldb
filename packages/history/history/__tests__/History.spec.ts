@@ -5,6 +5,8 @@ import { SignalDBHistory } from '../src/index'
 interface TestItem extends BaseItem<number> {
   id: number,
   value: string,
+  status?: string,
+  count?: number,
 }
 
 /**
@@ -16,15 +18,31 @@ function createCollection() {
   return collection
 }
 
+/**
+ * Registers a collection with the history manager for the test.
+ * @param history The history instance under test.
+ * @param collection The collection to register.
+ * @param overrides
+ * @returns The registered collection wrapper.
+ */
+function registerCollection(
+  history: SignalDBHistory,
+  collection: Collection<TestItem, number>,
+  overrides?: () => Partial<TestItem>,
+) {
+  return history.addCollection(collection, overrides)
+}
+
 describe('SignalDBHistory', () => {
   let history: SignalDBHistory
   let collection: Collection<TestItem, number>
+  let registeredCollection: ReturnType<typeof registerCollection>
   let item: TestItem
 
   beforeEach(() => {
     history = new SignalDBHistory(10)
     collection = createCollection()
-    history.addCollection(collection)
+    registeredCollection = registerCollection(history, collection)
     item = { id: 1, value: 'a' }
   })
 
@@ -57,6 +75,29 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 1 })).toBeUndefined()
   })
 
+  it('should apply overrides when redoing inserts and undoing removals', () => {
+    const overriddenHistory = new SignalDBHistory(10)
+    const overriddenCollection = createCollection()
+    overriddenHistory.addCollection(overriddenCollection, () => ({ status: 'synced' }))
+
+    overriddenCollection.insert({ id: 1, value: 'a', status: 'draft' })
+    overriddenHistory.undo()
+    overriddenHistory.redo()
+
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+
+    overriddenCollection.removeOne({ id: 1 })
+    overriddenHistory.undo()
+
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+  })
+
   it('should handle batch operations', () => {
     Collection.batch(() => {
       collection.insert({ id: 2, value: 'x' })
@@ -70,6 +111,27 @@ describe('SignalDBHistory', () => {
     history.redo()
     expect(collection.findOne({ id: 2 })?.value).toBe('x')
     expect(collection.findOne({ id: 3 })?.value).toBe('y')
+  })
+
+  it('should apply overrides when undoing and redoing updates', () => {
+    const overriddenHistory = new SignalDBHistory(10)
+    const overriddenCollection = createCollection()
+    overriddenHistory.addCollection(overriddenCollection, () => ({ status: 'synced' }))
+
+    overriddenCollection.insert({ id: 1, value: 'a', status: 'draft' })
+    overriddenCollection.updateOne({ id: 1 }, { $set: { value: 'b', status: 'pending' } })
+
+    overriddenHistory.undo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+
+    overriddenHistory.redo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'b',
+      status: 'synced',
+    })
   })
 
   it('should not exceed max history length', () => {
@@ -91,9 +153,19 @@ describe('SignalDBHistory', () => {
     expect(history['history'].length).toBe(1)
   })
 
-  it('should destroy listeners', () => {
-    const offSpy = vi.spyOn(collection, 'off')
+  it('should destroy global listeners', () => {
+    const offSpy = vi.spyOn(Collection.staticEvents, 'off')
+
     history.destroy()
+
+    expect(offSpy).toHaveBeenCalled()
+  })
+
+  it('should destroy collection listeners through the registered collection', () => {
+    const offSpy = vi.spyOn(collection, 'off')
+
+    registeredCollection.destructor()
+
     expect(offSpy).toHaveBeenCalled()
   })
 
@@ -156,6 +228,167 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 2 })).toBeUndefined()
     history.undo()
     expect(collection.findOne({ id: 1 })).toBeUndefined()
+  })
+
+  it('should execute doPaused on a registered collection and only pause the target collection', () => {
+    const secondCollection = createCollection()
+    registerCollection(history, secondCollection)
+
+    collection.insert(item)
+    secondCollection.insert({ id: 2, value: 'b' })
+
+    registeredCollection.doPaused(() => {
+      collection.insert({ id: 3, value: 'c' })
+      collection.updateOne({ id: 1 }, { $set: { value: 'z' } })
+      secondCollection.insert({ id: 4, value: 'd' })
+    })
+
+    expect(history['history'].length).toBe(3)
+    expect(collection.findOne({ id: 1 })?.value).toBe('z')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+    expect(secondCollection.findOne({ id: 4 })?.value).toBe('d')
+
+    history.undo()
+    expect(secondCollection.findOne({ id: 4 })).toBeUndefined()
+    expect(collection.findOne({ id: 1 })?.value).toBe('z')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+  })
+
+  it('should execute doPausedAsync on a registered collection and only pause the target collection', async () => {
+    const secondCollection = createCollection()
+    registerCollection(history, secondCollection)
+
+    collection.insert(item)
+    secondCollection.insert({ id: 2, value: 'b' })
+
+    await registeredCollection.doPausedAsync(async () => {
+      collection.insert({ id: 3, value: 'c' })
+      await new Promise(resolve => setTimeout(resolve, 10))
+      collection.updateOne({ id: 1 }, { $set: { value: 'y' } })
+      secondCollection.insert({ id: 4, value: 'd' })
+    })
+
+    expect(history['history'].length).toBe(3)
+    expect(collection.findOne({ id: 1 })?.value).toBe('y')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+    expect(secondCollection.findOne({ id: 4 })?.value).toBe('d')
+
+    history.undo()
+    expect(secondCollection.findOne({ id: 4 })).toBeUndefined()
+    expect(collection.findOne({ id: 1 })?.value).toBe('y')
+    expect(collection.findOne({ id: 3 })?.value).toBe('c')
+  })
+
+  it('should record history for a collection again after registered doPaused is finished', () => {
+    collection.insert(item)
+
+    registeredCollection.doPaused(() => {
+      collection.insert({ id: 2, value: 'b' })
+    })
+
+    collection.insert({ id: 3, value: 'c' })
+
+    expect(history['history'].length).toBe(2)
+    history.undo()
+    expect(collection.findOne({ id: 3 })).toBeUndefined()
+    expect(collection.findOne({ id: 2 })?.value).toBe('b')
+  })
+
+  it('should record history for a collection again after registered doPausedAsync is finished', async () => {
+    collection.insert(item)
+
+    await registeredCollection.doPausedAsync(async () => {
+      collection.insert({ id: 2, value: 'b' })
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+
+    collection.insert({ id: 3, value: 'c' })
+
+    expect(history['history'].length).toBe(2)
+    history.undo()
+    expect(collection.findOne({ id: 3 })).toBeUndefined()
+    expect(collection.findOne({ id: 2 })?.value).toBe('b')
+  })
+
+  it('should defer history commits for batched columns until the batch is committed', () => {
+    collection.insert({ id: 1, value: 'a', status: 'draft' })
+
+    const batch = registeredCollection.startBatch(1, ['value'])
+
+    collection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    collection.updateOne({ id: 1 }, { $set: { value: 'c' } })
+
+    expect(history['history'].length).toBe(1)
+    expect(collection.findOne({ id: 1 })?.value).toBe('c')
+
+    batch.commitAndUnregister()
+
+    expect(history['history'].length).toBe(2)
+    history.undo()
+    expect(collection.findOne({ id: 1 })?.value).toBe('a')
+    history.redo()
+    expect(collection.findOne({ id: 1 })?.value).toBe('c')
+  })
+
+  it('should keep non-batched column changes separate from the batched update', () => {
+    collection.insert({ id: 1, value: 'a', status: 'draft', count: 0 })
+
+    const batch = registeredCollection.startBatch(1, ['value'])
+
+    collection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    collection.updateOne({ id: 1 }, { $set: { status: 'published' } })
+    collection.updateOne({ id: 1 }, { $set: { value: 'c' } })
+
+    batch.commitAndUnregister()
+
+    expect(history['history'].length).toBe(3)
+    expect(collection.findOne({ id: 1 })).toMatchObject({
+      value: 'c',
+      status: 'published',
+    })
+
+    history.undo()
+    expect(collection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'published',
+    })
+
+    history.undo()
+    expect(collection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'draft',
+    })
+  })
+
+  it('should apply overrides to batched updates during undo and redo', () => {
+    const overriddenHistory = new SignalDBHistory(10)
+    const overriddenCollection = createCollection()
+    const overriddenRegisteredCollection = registerCollection(
+      overriddenHistory,
+      overriddenCollection,
+      () => ({ status: 'synced' }),
+    )
+
+    overriddenCollection.insert({ id: 1, value: 'a', status: 'draft' })
+
+    const batch = overriddenRegisteredCollection.startBatch(1, ['value'])
+
+    overriddenCollection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    overriddenCollection.updateOne({ id: 1 }, { $set: { value: 'c' } })
+
+    batch.commitAndUnregister()
+
+    overriddenHistory.undo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'a',
+      status: 'synced',
+    })
+
+    overriddenHistory.redo()
+    expect(overriddenCollection.findOne({ id: 1 })).toMatchObject({
+      value: 'c',
+      status: 'synced',
+    })
   })
 
   it('should record history after doPaused is finished', () => {
