@@ -167,8 +167,6 @@ export class HistoryRegisteredCollection<TItem extends { id: unknown }> {
   public constructor(
     protected readonly collection: Collection<TItem, TItem['id']>,
     protected readonly history: {
-      startCollectionBatch(): void,
-      endCollectionBatch(): void,
       pushToBatch(operation: UndoRedoable): void,
     },
     protected readonly overrides: () => Partial<TItem> = () => ({}),
@@ -176,23 +174,15 @@ export class HistoryRegisteredCollection<TItem extends { id: unknown }> {
     const addedListener = this.onAdded.bind(this)
     const changedListener = this.onChanged.bind(this)
     const removedListener = this.onRemoved.bind(this)
-    const batchStartListener = this.history.startCollectionBatch.bind(
-      this.history,
-    )
-    const batchEndListener = this.history.endCollectionBatch.bind(this.history)
 
     collection.on('added', addedListener)
     collection.on('changed', changedListener)
     collection.on('removed', removedListener)
-    collection.on('batch.start', batchStartListener)
-    collection.on('batch.end', batchEndListener)
 
     this.removeListeners = () => {
       collection.off('added', addedListener)
       collection.off('changed', changedListener)
       collection.off('removed', removedListener)
-      collection.off('batch.start', batchStartListener)
-      collection.off('batch.end', batchEndListener)
     }
   }
 
@@ -286,7 +276,6 @@ export class SignalDBHistory {
   private history: UndoRedoable[][] = []
 
   private activeGlobalBatchCount = 0
-  private activeCollectionBatchCount = 0
   private currentBatch: UndoRedoable[] = []
 
   private globalPauseDepth = 0
@@ -353,8 +342,6 @@ export class SignalDBHistory {
     overrides: () => Partial<TItem> = () => ({}),
   ): HistoryRegisteredCollection<TItem> {
     return new HistoryRegisteredCollection(collection, {
-      startCollectionBatch: this.startCollectionBatch.bind(this),
-      endCollectionBatch: this.endCollectionBatch.bind(this),
       pushToBatch: this.pushToBatch.bind(this),
     }, overrides)
   }
@@ -368,24 +355,7 @@ export class SignalDBHistory {
       throw new Error('Cannot end global batch while none is  open.')
     }
     this.activeGlobalBatchCount--
-    if (
-      this.activeGlobalBatchCount === 0
-      && this.activeCollectionBatchCount === 0
-    ) {
-      this.commitBatch()
-    }
-  }
-
-  private startCollectionBatch(): void {
-    this.activeCollectionBatchCount++
-  }
-
-  private endCollectionBatch(): void {
-    if (this.activeCollectionBatchCount <= 0) {
-      throw new Error('Cannot end a collection batch while none is open.')
-    }
-    this.activeCollectionBatchCount--
-    if (!this.activeGlobalBatchCount && this.activeCollectionBatchCount === 0) {
+    if (this.activeGlobalBatchCount === 0) {
       this.commitBatch()
     }
   }
@@ -426,7 +396,7 @@ export class SignalDBHistory {
 
     this.currentBatch.push(operation)
 
-    if (!this.activeGlobalBatchCount && this.activeCollectionBatchCount === 0) {
+    if (!this.activeGlobalBatchCount) {
       // No batch, immediately commit
       this.commitBatch()
     }

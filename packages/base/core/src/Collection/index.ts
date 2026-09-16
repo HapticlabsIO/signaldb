@@ -155,7 +155,7 @@ export default class Collection<
   private static collections: Collection<any, any>[] = []
   private static debugMode = false
   private static staticBatchOperationsInProgress = 0
-  private static postBatchCallbacks: (() => void)[] = []
+  private static postBatchCallbacks: Set<() => void> = new Set()
   private static fieldTracking = false
   private static onCreationCallbacks: ((collection: Collection<any>) => void)[] = []
   private static onDisposeCallbacks: ((collection: Collection<any>) => void)[] = []
@@ -215,16 +215,19 @@ export default class Collection<
 
       // Rebuild indices after the last nested batch operation completes
       if (Collection.staticBatchOperationsInProgress === 0) {
-        // rebuild indices as they are not rebuilt during batch operations
-        Collection.collections.forEach(
-          collection => collection.indicesOutdated ? collection.rebuildAllIndices() : null)
+        try {
+          // rebuild indices as they are not rebuilt during batch operations
+          Collection.collections.forEach(
+            collection => collection.indicesOutdated ? collection.rebuildAllIndices() : null)
 
-        // execute all post batch callbacks
-        const executableCallbacks = Collection.postBatchCallbacks.splice(0)
-        executableCallbacks.forEach(callback_ => callback_())
-
-        // emit batch end event
-        Collection.staticEvents.emit('static.batch.end')
+          // execute all post batch callbacks
+          const executableCallbacks = [...Collection.postBatchCallbacks]
+          Collection.postBatchCallbacks.clear()
+          executableCallbacks.forEach(callback_ => callback_())
+        } finally {
+          // emit batch end event
+          Collection.staticEvents.emit('static.batch.end')
+        }
       }
     }
   }
@@ -689,7 +692,7 @@ export default class Collection<
       bindEvents: (requery) => {
         const handleRequery = () => {
           if (Collection.staticBatchOperationsInProgress !== 0) {
-            Collection.postBatchCallbacks.push(requery)
+            Collection.postBatchCallbacks.add(requery)
             return
           }
           requery()

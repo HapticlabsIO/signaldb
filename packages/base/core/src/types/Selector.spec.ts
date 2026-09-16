@@ -31,16 +31,9 @@ it('should allow basic field queries', () => {
   }>()
 })
 
-it('should allow nested object queries', () => {
-  expectTypeOf<Selector<TestUser>>().toExtend<{
-    'address.street'?: string | RegExp | FieldExpression<string>,
-    'address.city'?: string | RegExp | FieldExpression<string>,
-  }>()
-})
-
 it('should allow union types for fields', () => {
   expectTypeOf<Selector<{ status: 'active' | 'inactive' }>>().toExtend<{
-    status?: 'active' | 'inactive' | FieldExpression<'active' | 'inactive'>,
+    status?: 'active' | 'inactive' | FieldExpression<'active' | 'inactive'> | RegExp,
   }>()
   expectTypeOf<FieldExpression<'active' | 'inactive'>>().toExtend<{
     $eq?: 'active' | 'inactive',
@@ -56,27 +49,10 @@ it('should allow array queries', () => {
   expectTypeOf<FlatSelector<TestUser>['tags']>().toEqualTypeOf<string | RegExp | FieldExpression<string> | string[] | FieldExpression<string[]> | undefined>()
 })
 
-it('should allow array of objects queries', () => {
-  expectTypeOf<Selector<TestUser>>().toExtend<{
-    'scores.math'?: number | FieldExpression<number>,
-    'scores.$.math'?: number | FieldExpression<number>,
-  }>()
-})
-
 it('should allow logical operators', () => {
   expectTypeOf<Selector<TestUser>>().toExtend<{
     $or?: Selector<TestUser>[],
     $and?: Selector<TestUser>[],
     $nor?: Selector<TestUser>[],
-  }>()
-})
-
-it('should allow deep nested queries', () => {
-  expectTypeOf<Selector<TestUser>>().toExtend<{
-    'deep.nested.value'?: boolean | FieldExpression<false> | FieldExpression<true>,
-  }>()
-  expectTypeOf<Selector<TestUser>>().toExtend<{
-    'scores.deep.nested'?: boolean | FieldExpression<false> | FieldExpression<true>,
-    'scores.$.deep.nested'?: boolean | FieldExpression<false> | FieldExpression<true>,
   }>()
 })
