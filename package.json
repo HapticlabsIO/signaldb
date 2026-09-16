@@ -10,7 +10,6 @@
     "typedoc": "typedoc",
     "coverage": "vitest run --coverage",
     "build": "npm run build -w packages/base/core -w packages/history/history",
-    "analyze-bundle": "npm run analyze-bundle -w packages/base/core -w packages/history/history",
     "type-check": "tsc --noEmit",
     "docs:dev": "vitepress dev docs",
     "docs:build": "npm run build && npm run typedoc && npm run docs:build-vitepress",
@@ -23,9 +22,6 @@
     "packages/base/*",
     "packages/history/*"
   ],
-  "optionalDependencies": {
-    "@codecov/bundle-analyzer": "^1.9.1"
-  },
   "devDependencies": {
     "@commitlint/cli": "20.4.3",
     "@commitlint/config-conventional": "20.4.3",
