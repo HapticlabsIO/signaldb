@@ -50,7 +50,7 @@ npm uninstall -S signaldb \
 
 ### Core Packages
 
-The core package has been renamed to `@signaldb/core` and the [`SyncManager`](/reference/sync/) has been moved to `@signaldb/sync`. You need to install the new packages and update your imports. `@signaldb/sync` is only needed if you're using the [sync engine](/sync/).
+The core package has been renamed to `@signaldb/core` and the [`SyncManager`](https://signaldb.js.org/reference/sync/) has been moved to `@signaldb/sync`. You need to install the new packages and update your imports. `@signaldb/sync` is only needed if you're using the [sync engine](https://signaldb.js.org/sync/).
 
 ```sh
 npm install @signaldb/core @signaldb/sync
@@ -259,9 +259,9 @@ const someCollection = new Collection({
 })
 ```
 
-## Switch from `ReplicatedCollection` to [`SyncManager`](/reference/sync/)
+## Switch from `ReplicatedCollection` to [`SyncManager`](https://signaldb.js.org/reference/sync/)
 
-The `ReplicatedCollection` class has been removed. If your application is using it, you need to switch to the [`SyncManager`](/reference/sync/) class. Since the [`SyncManager`](/reference/sync/) uses a totally different approach, you need to update your code.
+The `ReplicatedCollection` class has been removed. If your application is using it, you need to switch to the [`SyncManager`](https://signaldb.js.org/reference/sync/) class. Since the [`SyncManager`](https://signaldb.js.org/reference/sync/) uses a totally different approach, you need to update your code.
 
 Take a look at the [SyncManager documentation](https://signaldb.js.org/sync/) to see how to use it.
 

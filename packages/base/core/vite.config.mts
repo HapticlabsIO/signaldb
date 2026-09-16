@@ -28,7 +28,6 @@ export default defineConfig({
         format: 'es',
       },
       external: [
-        '@signaldb/devtools',
         'fast-sort',
         'mingo',
         'mingo/updater',

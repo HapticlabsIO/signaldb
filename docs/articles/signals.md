@@ -161,7 +161,7 @@ For developers, SignalDB’s use of signals significantly simplifies state manag
 
 ### Library-Agnostic Flexibility
 
-A key feature of SignalDB is its library-agnostic design, meaning it can be integrated with any signal implementation or JavaScript framework. Whether you're using React, Vue, Angular, or even custom signal libraries, SignalDB provides the flexibility to work within your existing technology stack. This adaptability allows developers to seamlessly incorporate SignalDB into a wide range of projects, leveraging its real-time capabilities without being tied to a specific framework or library. There are guides for [React](/guides/react/), [Vue](/guides/vue/), [Svelte](/guides/svelte/), [Angular](/guides/angular/), and [SolidJS](/guides/solid-js/) to help you get started with SignalDB in your preferred environment.
+A key feature of SignalDB is its library-agnostic design, meaning it can be integrated with any signal implementation or JavaScript framework. Whether you're using React, Vue, Angular, or even custom signal libraries, SignalDB provides the flexibility to work within your existing technology stack. This adaptability allows developers to seamlessly incorporate SignalDB into a wide range of projects, without being tied to a specific framework or library. See [`createReactivityAdapter`](/reference/core/createreactivityadapter/) to hook SignalDB up to your reactivity library of choice.
 
 ### Performance Optimization
 

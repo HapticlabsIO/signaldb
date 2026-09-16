@@ -5,10 +5,7 @@ import eslint from '@eslint/js'
 import { defineConfig } from 'eslint/config'
 import globals from 'globals'
 import { configs as tseslintConfigs } from 'typescript-eslint'
-import reactPlugin from 'eslint-plugin-react'
-import jsxA11yPlugin from 'eslint-plugin-jsx-a11y'
 import eslintPluginImport from 'eslint-plugin-import'
-import testingLibraryPlugin from 'eslint-plugin-testing-library'
 import jsdocPlugin from 'eslint-plugin-jsdoc'
 import vitestPlugin from '@vitest/eslint-plugin'
 import stylisticPlugin from '@stylistic/eslint-plugin'
@@ -30,8 +27,6 @@ export default defineConfig(
   unicornPlugin.configs.recommended,
   {
     plugins: {
-      'react': reactPlugin,
-      'jsx-a11y': jsxA11yPlugin,
       '@stylistic': stylisticPlugin,
     },
     linterOptions: {
@@ -46,9 +41,6 @@ export default defineConfig(
       },
     },
     settings: {
-      'react': {
-        version: 'detect',
-      },
       'import/resolver': {
         typescript: {
           project: './tsconfig.json',
@@ -80,18 +72,12 @@ export default defineConfig(
           args: true,
           props: true,
           refs: true,
-          DevTools: true,
-          isFailedDevToolsImportError: true,
-          Props: true,
         },
       }],
       'unicorn/no-null': 'off',
       'unicorn/prefer-event-target': 'off',
       'unicorn/filename-case': ['error', {
         cases: { camelCase: true, pascalCase: true },
-        ignore: [
-          String.raw`next-env\.d\.ts$`,
-        ],
       }],
       'unicorn/prefer-module': 'off',
       'unicorn/no-array-reduce': 'off',
@@ -154,38 +140,23 @@ export default defineConfig(
         args: 'after-used',
         ignoreRestSiblings: true,
       }],
-      'react/jsx-key': 'error',
       'lines-between-class-members': ['error', 'always', { exceptAfterSingleLine: true }],
-      'react/function-component-definition': ['error', {
-        namedComponents: 'arrow-function',
-        unnamedComponents: 'arrow-function',
-      }],
       'arrow-parens': ['error', 'as-needed', { requireForBlockBody: true }],
       'prefer-object-spread': 'error',
       'object-shorthand': ['error', 'always'],
     },
   },
   {
-    files: ['**/__tests__/**/*.(m)[jt]s?(x)', '**/?(*.)+(spec|test).(m)[jt]s?(x)'],
-    plugins: {
-      'testing-library': testingLibraryPlugin,
-    },
-  },
-  {
     ignores: [
-      '**/.next/**',
       '**/dist**',
       '**/node_modules/**',
       'coverage',
       'docs/.vitepress/cache',
       'docs/.vitepress/dist',
       'docs/public',
-      'examples/**/_next/**',
-      'examples/**/out/**',
     ],
   },
   { files: ['commitlint.config.js'], languageOptions: { globals: globals.node } },
-  { files: ['**/next.config.js'], languageOptions: { globals: globals.commonjs } },
   // https://github.com/import-js/eslint-plugin-import/issues/1913#issuecomment-1034025709
   ...projectDirectories.map(projectDirectory => ({
     files: [`${projectDirectory}/**/*.{t,j}s`, `${projectDirectory}/**/*.m{t,j}s`],

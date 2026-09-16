@@ -14,17 +14,17 @@ head:
     content: Reference | SignalDB
 - - meta
   - name: og:description
-    content: Explore the comprehensive reference for SignalDB, including core components, integrations, persistence adapters, and reactivity adapters to enhance your projects.
+    content: Explore the comprehensive reference for SignalDB's core components to enhance your projects.
 - - meta
   - name: description
-    content: Explore the comprehensive reference for SignalDB, including core components, integrations, persistence adapters, and reactivity adapters to enhance your projects.
+    content: Explore the comprehensive reference for SignalDB's core components to enhance your projects.
 - - meta
   - name: keywords
-    content: SignalDB, API reference, core components, integrations, persistence adapters, reactivity adapters, data management, JavaScript, TypeScript, SyncManager, collections, reactivity
+    content: SignalDB, API reference, core components, data management, JavaScript, TypeScript, collections, reactivity
 ---
 # Reference
 
-SignalDB consists of several packages of which each has indiviudal exports.
+SignalDB consists of the following packages, each with individual exports.
 
 ## Base
 
@@ -39,60 +39,3 @@ SignalDB consists of several packages of which each has indiviudal exports.
 * [`createPersistenceAdapter`](/reference/core/createpersistenceadapter/)
 * [`createReactivityAdapter`](/reference/core/createreactivityadapter/)
 * [`combinePersistenceAdapters`](/reference/core/combinepersistenceadapters/)
-
-### `@signaldb/sync`
-* [`SyncManager`](/reference/sync/)
-
-## Integrations
-
-### `@signaldb/react`
-* [`createUseReactivityHook`](/reference/react/)
-
-## Persistence Adapters
-
-### `@signaldb/fs`
-* [`createFileSystemAdapter`](/reference/fs/)
-
-### `@signaldb/localstorage`
-* [`createLocalStorageAdapter`](/reference/localstorage/)
-
-### `@signaldb/opfs`
-* [`createOPFSAdapter`](/reference/opfs/)
-
-## Reactivity Adapters
-
-### `@signaldb/angular`
-* [`angularReactivityAdapter`](/reference/angular/)
-
-### `@signaldb/maverickjs`
-* [`maverickjsReactivityAdapter`](/reference/maverickjs/)
-
-### `@signaldb/meteor`
-* [`meteorReactivityAdapter`](/reference/meteor/)
-
-### `@signaldb/mobx`
-* [`mobxReactivityAdapter`](/reference/mobx/)
-
-### `@signaldb/oby`
-* [`obyReactivityAdapter`](/reference/oby/)
-
-### `@signaldb/preact`
-* [`preactReactivityAdapter`](/reference/preact/)
-
-### `@signaldb/reactively`
-* [`reactivelyReactivityAdapter`](/reference/reactively/)
-
-### `@signaldb/sinuous`
-* [`sinuousReactivityAdapter`](/reference/sinuous/)
-
-### `@signaldb/sjs`
-* [`sjsReactivityAdapter`](/reference/sjs/)
-
-### `@signaldb/solid`
-* [`solidReactivityAdapter`](/reference/solid/)
-
-### `@signaldb/usignal`
-* [`usignalReactivityAdapter`](/reference/usignal/)
-
-### `@signaldb/vue`
-* [`vueReactivityAdapter`](/reference/vue/)

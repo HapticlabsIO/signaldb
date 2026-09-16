@@ -32,12 +32,5 @@ Persistence adapters are responsible for transforming the high-level operations 
 
 The main benefit of using persistence adapters is the abstraction they provide. They allow SignalDB to remain agnostic to the underlying storage system. This means that you can switch between different systems without changing the rest of your code.
 
-The follwing persistence adapters are currently available:
-
-- [IndexedDB](/reference/indexeddb/)
-- [localStorage](/reference/localstorage/)
-- [OPFS](/reference/opfs/)
-- [FileSystem](/reference/fs/)
-
-Building your own persistence adapter for your speicific use case is also possible and pretty straight forward.
+This package no longer ships prebuilt persistence adapters. Building your own persistence adapter for your specific use case (localStorage, IndexedDB, OPFS, a remote server, etc.) is straightforward.
 See [`createPersistenceAdapter`](/reference/core/createpersistenceadapter/) for more information.
