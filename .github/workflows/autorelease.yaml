@@ -1,5 +1,8 @@
 name: Release on version change
 
+# Inlined from HapticlabsIO/workflows' release-on-version-change.yml: this repository is
+# public, and public repositories cannot call reusable workflows from private ones.
+
 on:
   push:
     branches: [main]
@@ -10,4 +13,36 @@ permissions:
 
 jobs:
   release:
-    uses: HapticlabsIO/workflows/.github/workflows/release-on-version-change.yml@main
+    runs-on: ubuntu-latest
+
+    # Serialise runs so two pushes in quick succession can't race for the same tag.
+    concurrency:
+      group: release-on-version-change-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Create tag and release for a new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(jq -r '.version // empty' package.json)
+          if [ -z "$version" ]; then
+            echo "No version found in package.json" >&2
+            exit 1
+          fi
+
+          tag="v${version}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists - nothing to release"
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --generate-notes
