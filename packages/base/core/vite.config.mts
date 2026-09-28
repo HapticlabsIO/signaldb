@@ -11,7 +11,6 @@ export default defineConfig({
     tsconfigPaths(),
   ],
   build: {
-    manifest: true,
     minify: false,
     sourcemap: false,
     reportCompressedSize: true,

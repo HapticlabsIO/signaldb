@@ -35,7 +35,7 @@ jobs:
             ${{ runner.OS }}-modules-${{ matrix.node-version }}-
       - name: install modules
         run: |
-          npm install --no-audit --loglevel=error --no-update-notifier
+          npm install --include=dev --no-audit --loglevel=error --no-update-notifier
 
   linting:
     needs: preflight
