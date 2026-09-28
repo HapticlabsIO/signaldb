@@ -1,0 +1,13 @@
+name: Release on version change
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: HapticlabsIO/workflows/.github/workflows/release-on-version-change.yml@main

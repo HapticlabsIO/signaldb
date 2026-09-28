@@ -59,6 +59,10 @@ When you make changes to the API, please also update the documentation in the `d
 npm run docs:dev
 ```
 
+## 🏷️ Releasing (HapticlabsIO fork)
+
+Consumers install the packages from git tags of this fork. To release, bump the `version` in the root `package.json`. When that change lands on `main`, the autorelease workflow creates the tag `v<version>` and a GitHub release.
+
 ## ❓ Questions
 
 If you have any questions, feel free to [open a disscussion on GitHub](https://github.com/maxnowack/signaldb/discussions/new/choose) or join our [Discord server](https://discord.gg/qMvXKXxBTp).

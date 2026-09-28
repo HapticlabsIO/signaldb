@@ -1,5 +1,6 @@
 {
   "name": "signaldb-workspace",
+  "version": "1.0.1",
   "private": true,
   "scripts": {
     "preversion": "npm run lint && npm run test -- run && npm run build",
