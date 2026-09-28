@@ -172,6 +172,7 @@ export default defineConfig(
           'docs/.vitepress/config.ts',
           '**/vite.config.mts',
           '**/vitest.config.mts',
+          'scripts/**',
         ],
         packageDir: [import.meta.url, path.join(import.meta.url, projectDirectory)],
       }],

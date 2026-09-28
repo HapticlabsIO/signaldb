@@ -10,6 +10,7 @@
     "typedoc": "typedoc",
     "coverage": "vitest run --coverage",
     "build": "npm run build -w packages/base/core -w packages/history/history",
+    "check:reproducible-build": "node scripts/checkReproducibleBuild.mts",
     "type-check": "tsc --noEmit",
     "docs:dev": "vitepress dev docs",
     "docs:build": "npm run build && npm run typedoc && npm run docs:build-vitepress",

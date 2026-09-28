@@ -18,7 +18,9 @@ export default defineConfig({
     lib: {
       name: 'SignalDB',
       entry: path.resolve(__dirname, 'src/index.ts'),
-      fileName: format => (format === 'es' ? 'index.mjs' : `index.${format}.js`),
+      // With preserveModules, every module needs its own name: rollup numbers colliding
+      // names (index2.mjs, ...) in module-resolution order, which varies between builds.
+      fileName: (format, entryName) => (format === 'es' ? `${entryName}.mjs` : `${entryName}.${format}.js`),
       formats: ['es', 'cjs'],
     },
     rollupOptions: {

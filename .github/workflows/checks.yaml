@@ -143,6 +143,28 @@ jobs:
         run: |
           npm run build
 
+  reproducible-build:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+      - name: Load node modules cache
+        id: modules-cache
+        uses: actions/cache/restore@v5
+        timeout-minutes: 5
+        continue-on-error: false
+        with:
+          fail-on-cache-miss: true
+          path: |
+            **/node_modules
+          key: ${{ runner.OS }}-modules-24.x-${{ hashFiles('**/package-lock.json') }}
+      - name: check build is reproducible
+        run: |
+          npm run check:reproducible-build
+
   build-docs:
     needs: preflight
     runs-on: ubuntu-latest
