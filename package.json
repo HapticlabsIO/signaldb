@@ -1,5 +1,6 @@
 {
   "name": "signaldb-workspace",
+  "version": "1.0.1",
   "private": true,
   "scripts": {
     "preversion": "npm run lint && npm run test -- run && npm run build",
@@ -10,6 +11,7 @@
     "typedoc": "typedoc",
     "coverage": "vitest run --coverage",
     "build": "npm run build -w packages/base/core -w packages/history/history",
+    "check:reproducible-build": "node scripts/checkReproducibleBuild.mts",
     "type-check": "tsc --noEmit",
     "docs:dev": "vitepress dev docs",
     "docs:build": "npm run build && npm run typedoc && npm run docs:build-vitepress",
@@ -22,10 +24,15 @@
     "packages/base/*",
     "packages/history/*"
   ],
+  "dependencies": {
+    "@rollup/plugin-typescript": "12.3.0",
+    "tslib": "2.8.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.1"
+  },
   "devDependencies": {
     "@commitlint/cli": "20.4.3",
     "@commitlint/config-conventional": "20.4.3",
-    "@rollup/plugin-typescript": "12.3.0",
     "@stylistic/eslint-plugin": "^5.6.1",
     "@typescript-eslint/eslint-plugin": "8.56.1",
     "@typescript-eslint/parser": "8.56.1",
@@ -41,16 +48,9 @@
     "happy-dom": "20.8.3",
     "husky": "9.1.7",
     "mermaid": "^11.12.2",
-    "rimraf": "6.1.3",
-    "rollup-plugin-typescript-paths": "1.5.0",
     "ts-node": "10.9.2",
-    "tslib": "2.8.1",
     "typedoc": "^0.28.15",
-    "typescript": "5.9.3",
     "typescript-eslint": "^8.52.0",
-    "vite": "7.3.1",
-    "vite-plugin-dts": "4.5.4",
-    "vite-tsconfig-paths": "6.1.1",
     "vitepress": "1.6.4",
     "vitepress-plugin-llms": "^1.10.0",
     "vitepress-plugin-mermaid": "^2.0.17",

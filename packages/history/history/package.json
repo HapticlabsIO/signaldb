@@ -3,7 +3,7 @@
   "version": "1.0.0-beta.0",
   "description": "History for SignalDB",
   "scripts": {
-    "build": "rimraf dist && vite build",
+    "build": "vite build",
     "test": "vitest"
   },
   "repository": {

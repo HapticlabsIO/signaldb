@@ -3,10 +3,11 @@
 ## 💻 Setting up development environment
 
 To set up a development environment, you need to have nodejs installed. Make sure that it is at least the current LTS version.
-Then, install the dependencies, by running `npm install` in the root of the repository.
+Then, install the dependencies, by running `npm install --include=dev` in the root of the repository.
+A plain `npm install` only installs what building the packages needs (see `.npmrc`), without the tooling for tests, linting and docs.
 
 ```sh
-npm install
+npm install --include=dev
 ```
 
 ## ✏️ Make your changes
@@ -57,6 +58,10 @@ When you make changes to the API, please also update the documentation in the `d
 ```sh
 npm run docs:dev
 ```
+
+## 🏷️ Releasing (HapticlabsIO fork)
+
+Consumers install the packages from git tags of this fork. To release, bump the `version` in the root `package.json`. When that change lands on `main`, the autorelease workflow creates the tag `v<version>` and a GitHub release.
 
 ## ❓ Questions
 
