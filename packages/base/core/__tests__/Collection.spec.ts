@@ -997,7 +997,7 @@ describe('Collection', () => {
       expect(col.findOne({ id: '1' })).toEqual({ id: '1', name: 'John' })
     })
 
-    it('should disable indexing temporarily if indices are outdated', () => {
+    it('should rebuild outdated indices when a query needs them', () => {
       const col = new Collection<{ id: string, name: string }>({
         indices: [createIndex('name')],
       })

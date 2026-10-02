@@ -38,7 +38,7 @@ Enables or disables field tracking for all collections. See [Field-Level Reactiv
 
 ### `batch(callback: () => void)`
 
-If you need to execute many operations at once in multiple collections, you can use the global `Collection.batch()` method. This method will execute all operations inside the callback without rebuilding the index on every change.
+If you need to execute many operations at once in multiple collections, you can use the global `Collection.batch()` method. This method will execute all operations inside the callback without rebuilding the index on every change. Queries inside the callback still use the indices, which are rebuilt when a query needs them after a write.
 
 ### `getCollections()`
 
@@ -150,7 +150,7 @@ Behaves the same like `.removeMany()` but only removes the first found document.
 
 ### `batch(callback: () => void)`
 
-If you need to execute many operations at once, things can get slow as the index would be rebuild on every change to the collection. To prevent this, you can use the `.batch()` method. This method will execute all operations inside the callback without rebuilding the index on every change. If you need to batch updates of multiple collections, you can use the global `Collection.batch()` method.
+If you need to execute many operations at once, things can get slow as the index would be rebuild on every change to the collection. To prevent this, you can use the `.batch()` method. This method will execute all operations inside the callback without rebuilding the index on every change. Queries inside the callback still use the indices, which are rebuilt when a query needs them after a write. If you need to batch updates of multiple collections, you can use the global `Collection.batch()` method.
 
 ```js
 collection.batch(() => {

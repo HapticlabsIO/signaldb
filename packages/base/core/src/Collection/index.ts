@@ -196,9 +196,9 @@ export default class Collection<
 
   /**
    * Executes a batch operation, allowing multiple modifications to the collection
-   * while deferring index rebuilding until all operations in the batch are completed.
-   * This improves performance by avoiding repetitive index recalculations and
-   * provides atomicity for the batch of operations.
+   * while deferring index rebuilding until a query needs the indices or all operations in the
+   * batch are completed. This improves performance by avoiding repetitive index recalculations
+   * and provides atomicity for the batch of operations.
    * @param callback - The batch operation to execute.
    * @returns The result of the batch operation callback.
    */
@@ -216,7 +216,8 @@ export default class Collection<
       // Rebuild indices after the last nested batch operation completes
       if (Collection.staticBatchOperationsInProgress === 0) {
         try {
-          // rebuild indices as they are not rebuilt during batch operations
+          // rebuild the indices that were not rebuilt since the last write, as writes in a
+          // batch only rebuild them once a query needs them
           Collection.collections.forEach(
             collection => collection.indicesOutdated ? collection.rebuildAllIndices() : null)
 
@@ -571,11 +572,9 @@ export default class Collection<
     }
 
     if (this.indicesOutdated) {
-      return {
-        matched: false,
-        positions: [],
-        optimizedSelector: selector,
-      }
+      // Writes made in a batch leave the indices stale. Rebuilding them for the query is
+      // cheaper than testing every item against the selector, which is what ignoring them costs.
+      this.rebuildAllIndices()
     }
 
     return getIndexInfo(this.indexProviders, selector)
