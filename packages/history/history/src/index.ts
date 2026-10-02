@@ -249,9 +249,20 @@ export class HistoryRegisteredCollection<TItem extends { id: unknown }> {
     this.history.pushToBatch(new RemoveOperation(item, this.collection, this.overrides))
   }
 
+  /**
+   * Starts coalescing the changes to the given columns of an item into a
+   * single history step, which is recorded when the batch is committed.
+   * @param id The item to batch changes of.
+   * @param columns The columns whose changes are coalesced.
+   * @param onCommit Called once the batch is committed and unregistered, so
+   * that other consumers can end work they started alongside the batch. Ignored
+   * if a batch for the item is already started.
+   * @returns The batch, to be committed with `commitAndUnregister`.
+   */
   public startBatch(
     id: TItem['id'],
     columns: (keyof TItem)[],
+    onCommit: () => void = () => {},
   ): BatchUpdate<TItem> {
     const existingBatch = this.batchUpdateMap.get(id)
     if (existingBatch) {
@@ -263,7 +274,10 @@ export class HistoryRegisteredCollection<TItem extends { id: unknown }> {
     const batch = new BatchUpdate(
       columns,
       this.history.pushToBatch.bind(this.history),
-      () => this.batchUpdateMap.delete(id),
+      () => {
+        this.batchUpdateMap.delete(id)
+        onCommit()
+      },
       this.overrides,
     )
 
