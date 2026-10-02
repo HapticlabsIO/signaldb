@@ -79,4 +79,23 @@ describe('getMatchingKeys', () => {
     expect(result.include).toBeNull()
     expect(result.exclude).toBeNull()
   })
+
+  it('should report the keys of a value or of a single operator as exact', () => {
+    expect(getMatchingKeys('name', { name: 'John' }).isExact).toBe(true)
+    expect(getMatchingKeys('name', { name: { $in: ['John'] } }).isExact).toBe(true)
+    expect(getMatchingKeys('name', { name: { $in: [] } }).isExact).toBe(true)
+    expect(getMatchingKeys('name', { name: { $ne: 'John' } }).isExact).toBe(true)
+    expect(getMatchingKeys('name', { name: { $nin: ['John'] } }).isExact).toBe(true)
+  })
+
+  it('should not report the keys as exact if the field has more operators', () => {
+    const age = { $in: [1, 2], $gt: 1 }
+    expect(getMatchingKeys('age', { age })).toEqual({ include: ['1', '2'], exclude: null, isExact: false })
+    expect(getMatchingKeys('age', { age: { $nin: [3], $gt: 5 } }))
+      .toEqual({ include: null, exclude: ['3'], isExact: false })
+    expect(getMatchingKeys('age', { age: { $ne: 3, $in: [3, 6] } }))
+      .toEqual({ include: null, exclude: ['3'], isExact: false })
+    expect(getMatchingKeys('age', { age: { $ne: null, $in: [1] } }))
+      .toEqual({ include: ['1'], exclude: null, isExact: false })
+  })
 })

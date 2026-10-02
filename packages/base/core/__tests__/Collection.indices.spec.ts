@@ -3,6 +3,52 @@ import { Collection, createIndex, createIndexProvider } from '../src'
 
 type Person = { id: string, name: string, age: number }
 
+describe('Collection indices with several operators on one field', () => {
+  const people: Person[] = [
+    { id: '1', name: 'John', age: 3 },
+    { id: '2', name: 'Jane', age: 6 },
+    { id: '3', name: 'Jerry', age: 9 },
+    { id: '4', name: 'Jessica', age: 12 },
+  ]
+  const idsOf = (found: Person[]) => found.map(person => person.id).toSorted()
+
+  it('should apply the operators of an indexed field that the index does not serve', () => {
+    const col = new Collection<Person>({ indices: [createIndex('age')] })
+    people.forEach(person => col.insert(person))
+
+    expect(idsOf(col.find({ age: { $in: [3, 6, 9], $gt: 5 } }).fetch())).toEqual(['2', '3'])
+    expect(idsOf(col.find({ age: { $nin: [12], $gt: 5 } }).fetch())).toEqual(['2', '3'])
+    expect(idsOf(col.find({ age: { $ne: 3, $lt: 10 } }).fetch())).toEqual(['2', '3'])
+    expect(idsOf(col.find({ age: { $ne: 3, $in: [3, 6] } }).fetch())).toEqual(['2'])
+  })
+
+  it('should apply the operators of an indexed field to the queries that are made inside of a batch', () => {
+    const col = new Collection<Person>({ indices: [createIndex('age')] })
+
+    col.batch(() => {
+      people.forEach(person => col.insert(person))
+
+      expect(idsOf(col.find({ age: { $in: [3, 6, 9], $gt: 5 } }).fetch())).toEqual(['2', '3'])
+    })
+  })
+
+  it('should apply the operators of an indexed field within $and', () => {
+    const col = new Collection<Person>({ indices: [createIndex('age')] })
+    people.forEach(person => col.insert(person))
+
+    expect(idsOf(col.find({
+      $and: [{ age: { $nin: [12], $gt: 5 } }, { name: { $ne: 'Jane' } }],
+    }).fetch())).toEqual(['3'])
+  })
+
+  it('should still find nothing for an empty $in next to other operators', () => {
+    const col = new Collection<Person>({ indices: [createIndex('age')] })
+    people.forEach(person => col.insert(person))
+
+    expect(col.find({ age: { $in: [], $gt: 5 } }).fetch()).toEqual([])
+  })
+})
+
 describe('Collection indices in a batch', () => {
   it('should consult the indices for a query made after a write in a batch', () => {
     const query = vi.fn(() => ({ matched: false as const }))
@@ -98,6 +144,9 @@ describe('Collection indices in a batch', () => {
       { id: pick(ids) },
       { id: { $in: [pick(ids), pick(ids), pick(ids)] } },
       { name: { $in: [] } },
+      { age: { $in: [random(5), random(5), random(5)], $gt: random(5) } },
+      { age: { $nin: [random(5)], $gte: random(5) } },
+      { name: { $ne: pick(names), $in: [pick(names), pick(names)] } },
     ]
 
     Collection.batch(() => {

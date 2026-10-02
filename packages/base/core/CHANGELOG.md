@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * A selector is compiled once per query. Before, it was compiled again for every item it was tested against, which made queries that test many items several times slower.
 * A query for an empty list of values (`{ field: { $in: [] } }`) on an indexed field finds nothing without testing any item. Before, the index did not serve it and every item was tested.
 
+### Fixed
+
+* A query that gave an indexed field more operators than the index serves, such as `{ age: { $in: [1, 2], $gt: 1 } }`, ignored the others. They are tested on the items that the index finds now.
+
 ## [1.7.2] - 2026-01-07
 
 ### Changed

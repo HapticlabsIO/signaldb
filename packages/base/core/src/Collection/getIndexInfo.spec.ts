@@ -437,4 +437,22 @@ describe('getIndexInfo', () => {
       },
     })
   })
+
+  it('should keep the operators of a field that the index did not use', () => {
+    const ageIndex = createIndex('age')
+    ageIndex.rebuild([{ id: '0', age: 3 }, { id: '1', age: 6 }, { id: '2', age: 9 }])
+
+    expect(getIndexInfo([ageIndex], { age: { $in: [3, 6], $gt: 5 }, name: 'John' })).toEqual({
+      matched: true,
+      positions: [0, 1],
+      optimizedSelector: { age: { $in: [3, 6], $gt: 5 }, name: 'John' },
+    })
+
+    // The operator the index served is not tested again
+    expect(getIndexInfo([ageIndex], { age: { $in: [3, 6] }, name: 'John' })).toEqual({
+      matched: true,
+      positions: [0, 1],
+      optimizedSelector: { name: 'John' },
+    })
+  })
 })
