@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 * Queries made inside of a `batch` after a write use the indices of the collection. Before, the indices were ignored until the batch ended, so that every such query tested every item of the collection. Stale indices are now rebuilt when a query needs them.
+* Inserting an item no longer searches the memory of the collection for it, and looking items up no longer copies the memory. Loading n items takes time proportional to n instead of n², and a lookup by id does not take time proportional to the size of the collection anymore.
 
 ## [1.7.2] - 2026-01-07
 

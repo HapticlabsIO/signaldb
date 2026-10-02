@@ -326,8 +326,7 @@ export default class Collection<
             }
 
             // item does not exists yet; normal insert
-            this.memory().push(item)
-            const itemIndex = this.memory().findIndex(document => document === item)
+            const itemIndex = this.appendToMemory(item)
             this.idIndex.set(serializeValue(item.id), new Set([itemIndex]))
           })
           changes.modified.forEach((item) => {
@@ -581,7 +580,7 @@ export default class Collection<
   }
 
   private getItemAndIndex(selector: Selector<T>) {
-    const memory = this.memoryArray()
+    const memory = this.memoryItems()
     const indexInfo = this.getIndexInfo(selector)
     const items = indexInfo.matched
       ? indexInfo.positions.map(index => memory[index])
@@ -616,6 +615,31 @@ export default class Collection<
     return this.memory().map(item => item)
   }
 
+  /**
+   * Provides the items in the order they are stored in, to look them up by position. If the memory
+   * is an array, these are the stored items and not a copy of them, so they must not be modified.
+   * @returns The items of the collection.
+   */
+  private memoryItems(): readonly T[] {
+    const memory = this.memory()
+    return Array.isArray(memory) ? memory : this.memoryArray()
+  }
+
+  /**
+   * Appends an item to the memory.
+   * @param item - The item to append.
+   * @returns The position of the item in the memory.
+   */
+  private appendToMemory(item: T) {
+    const memory = this.memory()
+    memory.push(item)
+    // An array appends at its end, so only other memories have to be searched for the item, which
+    // takes time proportional to the number of items. That made loading n items take n² steps.
+    return Array.isArray(memory)
+      ? memory.length - 1
+      : memory.findIndex(document => document === item)
+  }
+
   private transform(item: E): U {
     if (!this.options.transform) return item as unknown as U
     return this.options.transform(item)
@@ -638,11 +662,13 @@ export default class Collection<
         }
 
         this.emit('getItems', selector)
-        const memory = this.memoryArray()
+        const memory = this.memoryItems()
 
         // no index available, use complete memory
         if (!indexInfo.matched) {
-          if (isEqual(selector, {})) return memory
+          // the items are handed out to callers that change the collection while they use them,
+          // so they must not be the stored ones
+          if (isEqual(selector, {})) return [...memory]
           return memory.filter(matchItems)
         }
 
@@ -761,8 +787,7 @@ export default class Collection<
     this.emit('validate', newItem)
     if (this.idIndex.has(serializeValue(newItem.id))) throw new Error('Item with same id already exists')
     this.emit('added.before', newItem)
-    this.memory().push(newItem)
-    const itemIndex = this.memory().findIndex(document => document === newItem)
+    const itemIndex = this.appendToMemory(newItem)
     this.idIndex.set(serializeValue(newItem.id), new Set([itemIndex]))
     this.rebuildIndices()
     this.emit('added', newItem)
