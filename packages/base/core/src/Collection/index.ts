@@ -6,7 +6,7 @@ import type Selector from '../types/Selector'
 import type Modifier from '../types/Modifier'
 import type IndexProvider from '../types/IndexProvider'
 import type { LowLevelIndexProvider } from '../types/IndexProvider'
-import match from '../utils/match'
+import { createMatcher } from '../utils/match'
 import modify from '../utils/modify'
 import isEqual from '../utils/isEqual'
 import randomId from '../utils/randomId'
@@ -585,7 +585,8 @@ export default class Collection<
     const items = indexInfo.matched
       ? indexInfo.positions.map(index => memory[index])
       : memory
-    const item = items.find(document => match(document, selector))
+    const matchesSelector = createMatcher(selector)
+    const item = items.find(document => matchesSelector(document))
     const foundInIndex = indexInfo.matched
       && indexInfo.positions.find(itemIndex => memory[itemIndex] === item)
     const index = foundInIndex
@@ -654,12 +655,11 @@ export default class Collection<
     return this.profile(
       () => {
         const indexInfo = this.getIndexInfo(selector)
-        const matchItems = (item: T) => {
-          if (indexInfo.optimizedSelector == null) return true // if no selector is given, return all items
-          if (Object.keys(indexInfo.optimizedSelector).length <= 0) return true // if selector is empty, return all items
-          const matches = match(item, indexInfo.optimizedSelector)
-          return matches
-        }
+        const { optimizedSelector } = indexInfo
+        // if no selector is given or the selector is empty, return all items
+        const matchItems = optimizedSelector == null || Object.keys(optimizedSelector).length <= 0
+          ? () => true
+          : createMatcher(optimizedSelector)
 
         this.emit('getItems', selector)
         const memory = this.memoryItems()
