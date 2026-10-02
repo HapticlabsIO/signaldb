@@ -3,6 +3,21 @@ import { Collection, createIndex, createIndexProvider } from '../src'
 
 type Person = { id: string, name: string, age: number }
 
+/**
+ * Creates pseudo random numbers from a fixed seed, so that a failure can be reproduced.
+ * @param seed the number that decides on the sequence of numbers
+ * @returns functions to get a number below a maximum and to pick one of some values
+ */
+function createRandom(seed: number) {
+  let state = seed
+  const random = (maximum: number) => {
+    state = (state * 1_103_515_245 + 12_345) % 2_147_483_648
+    return state % maximum
+  }
+  const pick = <T>(values: T[]) => values[random(values.length)]
+  return { random, pick }
+}
+
 describe('Collection indices with several operators on one field', () => {
   const people: Person[] = [
     { id: '1', name: 'John', age: 3 },
@@ -32,10 +47,13 @@ describe('Collection indices with several operators on one field', () => {
     })
   })
 
-  it('should apply the operators of an indexed field within $and', () => {
+  it('should apply the operators of an indexed field within $and and $or', () => {
     const col = new Collection<Person>({ indices: [createIndex('age')] })
     people.forEach(person => col.insert(person))
 
+    expect(idsOf(col.find({
+      $or: [{ age: { $in: [3, 6], $gt: 5 } }, { age: 12 }],
+    }).fetch())).toEqual(['2', '4'])
     expect(idsOf(col.find({
       $and: [{ age: { $nin: [12], $gt: 5 } }, { name: { $ne: 'Jane' } }],
     }).fetch())).toEqual(['3'])
@@ -46,6 +64,80 @@ describe('Collection indices with several operators on one field', () => {
     people.forEach(person => col.insert(person))
 
     expect(col.find({ age: { $in: [], $gt: 5 } }).fetch()).toEqual([])
+  })
+})
+
+describe('Collection indices with nested selectors', () => {
+  type Place = { id: string, name: string, age: number, city: string }
+
+  it('should answer selectors that nest $and and $or like a collection without indices does', () => {
+    const names = ['John', 'Jane', 'Jerry', 'Jessica']
+    const cities = ['Berlin', 'Rome', 'Paris']
+    // The city is not indexed, so that some of the conditions are served by the indices only partly
+    const indexed = new Collection<Place>({ indices: [createIndex('name'), createIndex('age')] })
+    const plain = new Collection<Place>()
+    for (let index = 0; index < 60; index += 1) {
+      const place = {
+        id: `id-${index}`,
+        name: names[index % names.length],
+        age: index % 5,
+        city: cities[index % cities.length],
+      }
+      indexed.insert(place)
+      plain.insert(place)
+    }
+
+    const { random, pick } = createRandom(7)
+    const condition = () => pick([
+      () => ({ name: pick(names) }),
+      () => ({ age: random(5) }),
+      () => ({ city: pick(cities) }),
+      () => ({ name: pick(names), age: random(5) }),
+      () => ({ age: random(5), city: pick(cities) }),
+      () => ({ name: { $in: [pick(names), pick(names)] } }),
+      () => ({ age: { $in: [random(5), random(5)], $gt: random(5) } }),
+    ])()
+    const selectors = () => [
+      { $or: [condition(), condition()] },
+      { ...condition(), $or: [condition(), condition()] },
+      { $and: [condition(), { $or: [condition(), condition()] }] },
+      { $or: [{ $and: [condition(), condition()] }, condition()] },
+      { $and: [condition(), condition()] },
+    ]
+    const byId = (a: Place, b: Place) => a.id.localeCompare(b.id)
+
+    for (let round = 0; round < 600; round += 1) {
+      for (const selector of selectors()) {
+        // The selector is part of what is compared, so that a failure names it
+        const answerOf = (col: Collection<Place>) => ({
+          selector: JSON.stringify(selector),
+          found: col.find(selector).fetch().toSorted(byId),
+        })
+        expect(answerOf(indexed)).toEqual(answerOf(plain))
+      }
+    }
+  })
+
+  it('should find the items that one branch of an $or has conditions left for next to others', () => {
+    const col = new Collection<Person>({ indices: [createIndex('age')] })
+    col.insert({ id: '1', name: 'Jane', age: 3 })
+    col.insert({ id: '2', name: 'Jane', age: 5 })
+    col.insert({ id: '3', name: 'John', age: 5 })
+
+    const found = col.find({ $or: [{ age: 3 }, { age: 5, name: 'John' }] }).fetch()
+
+    expect(found.map(person => person.id).toSorted()).toEqual(['1', '3'])
+  })
+
+  it('should only find the items of an $or that match the rest of the selector as well', () => {
+    const col = new Collection<Person>({ indices: [createIndex('age'), createIndex('name')] })
+    col.insert({ id: '1', name: 'John', age: 3 })
+    col.insert({ id: '2', name: 'Jane', age: 3 })
+    col.insert({ id: '3', name: 'John', age: 7 })
+
+    const found = col.find({ name: 'John', $or: [{ age: 3 }, { age: 5 }] }).fetch()
+
+    expect(found.map(person => person.id)).toEqual(['1'])
   })
 })
 
@@ -124,13 +216,7 @@ describe('Collection indices in a batch', () => {
     const indexed = new Collection<Person>({ indices: [createIndex('name'), createIndex('age')] })
     const plain = new Collection<Person>()
 
-    // A fixed sequence of pseudo random operations, so that a failure can be reproduced
-    let seed = 42
-    const random = (maximum: number) => {
-      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
-      return seed % maximum
-    }
-    const pick = <T>(values: T[]) => values[random(values.length)]
+    const { random, pick } = createRandom(42)
     const ids = Array.from({ length: 30 }, (_, index) => `id-${index}`)
     const byId = (a: Person, b: Person) => a.id.localeCompare(b.id)
 

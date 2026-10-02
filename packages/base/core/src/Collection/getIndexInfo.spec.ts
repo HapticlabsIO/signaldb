@@ -379,7 +379,7 @@ describe('getIndexInfo', () => {
       ],
     })).toEqual({
       matched: true,
-      positions: [1, 2, 0],
+      positions: [1],
       optimizedSelector: {
         $and: [
           {
@@ -389,13 +389,16 @@ describe('getIndexInfo', () => {
             ],
           },
         ],
+        // A branch of the $or has a condition left over, so that all branches are tested again
         $or: [
           {
             $and: [
-              { id: '0' },
+              { id: '0', postId: '0' },
               { id: '1' },
             ],
           },
+          { postId: '0', authorId: '0' },
+          { authorId: '0' },
         ],
       },
     })
@@ -453,6 +456,45 @@ describe('getIndexInfo', () => {
       matched: true,
       positions: [0, 1],
       optimizedSelector: { name: 'John' },
+    })
+  })
+
+  it('should test the branches of an $or again if the indices left a condition over for one of them', () => {
+    const people = [
+      { id: '0', age: 3, name: 'John' },
+      { id: '1', age: 5, name: 'John' },
+      { id: '2', age: 5, name: 'Jane' },
+    ]
+    const ageIndex = createIndex('age')
+    ageIndex.rebuild(people)
+    const selector = { $or: [{ age: 3 }, { age: 5, name: 'John' }] }
+
+    expect(getIndexInfo([ageIndex], selector)).toEqual({
+      matched: true,
+      positions: [0, 1, 2],
+      optimizedSelector: selector,
+    })
+  })
+
+  it('should only keep the positions of an $or that match the rest of the selector as well', () => {
+    const people = [
+      { id: '0', age: 3, name: 'John' },
+      { id: '1', age: 5, name: 'John' },
+      { id: '2', age: 5, name: 'Jane' },
+      { id: '3', age: 7, name: 'Jane' },
+    ]
+    const ageIndex = createIndex('age')
+    const nameIndex = createIndex('name')
+    ageIndex.rebuild(people)
+    nameIndex.rebuild(people)
+
+    expect(getIndexInfo([ageIndex, nameIndex], {
+      name: 'John',
+      $or: [{ age: 3 }, { age: 7 }],
+    })).toEqual({
+      matched: true,
+      positions: [0],
+      optimizedSelector: {},
     })
   })
 })

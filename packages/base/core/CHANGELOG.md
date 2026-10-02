@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 * A query that gave an indexed field more operators than the index serves, such as `{ age: { $in: [1, 2], $gt: 1 } }`, ignored the others. They are tested on the items that the index finds now.
+* A query with an `$or` returned wrong items when its branches had conditions that the indices do not serve, or when the selector had conditions next to the `$or`. The conditions of the whole selector are tested on the items that the indices find now.
 
 ## [1.7.2] - 2026-01-07
 
