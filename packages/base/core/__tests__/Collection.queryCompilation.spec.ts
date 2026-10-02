@@ -73,4 +73,42 @@ describe('Collection query compilation', () => {
 
     expect(compiled.selectors).toBe(0)
   })
+
+  describe('for an empty list of values', () => {
+    it('should find nothing without compiling a selector if an index serves the field', () => {
+      const indexed = new Collection<Person>({ indices: [createIndex('name')] })
+      indexed.insertMany([{ name: 'John', age: 1 }, { name: 'Jane', age: 2 }])
+      compiled.selectors = 0
+
+      expect(indexed.find({ name: { $in: [] } }).fetch()).toEqual([])
+
+      expect(compiled.selectors).toBe(0)
+    })
+
+    it('should find nothing without compiling a selector for the ids', () => {
+      expect(collection.find({ id: { $in: [] } }).fetch()).toEqual([])
+
+      expect(compiled.selectors).toBe(0)
+    })
+
+    it('should find nothing if the field is combined with others', () => {
+      const indexed = new Collection<Person>({ indices: [createIndex('name')] })
+      indexed.insertMany([{ name: 'John', age: 1 }, { name: 'Jane', age: 2 }])
+
+      expect(indexed.find({ name: { $in: [] }, age: 1 }).fetch()).toEqual([])
+      expect(indexed.find({ $or: [{ name: { $in: [] } }, { age: 2 }] }).fetch())
+        .toEqual([expect.objectContaining({ name: 'Jane' })])
+    })
+
+    it('should find nothing if no index serves the field', () => {
+      expect(collection.find({ name: { $in: [] } }).fetch()).toEqual([])
+    })
+
+    it('should still find every item for an empty $nin', () => {
+      const indexed = new Collection<Person>({ indices: [createIndex('name')] })
+      indexed.insertMany([{ name: 'John', age: 1 }, { name: 'Jane', age: 2 }])
+
+      expect(indexed.find({ name: { $nin: [] } }).fetch()).toHaveLength(2)
+    })
+  })
 })

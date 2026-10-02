@@ -35,8 +35,8 @@ export default function getMatchingKeys<
       return result
     }
 
-    // Handle $in operator
-    if (Array.isArray(fieldSelector.$in) && fieldSelector.$in.length > 0) {
+    // Handle $in operator. An empty list includes no key, so that no item can match.
+    if (Array.isArray(fieldSelector.$in)) {
       result.include = fieldSelector.$in.map(serializeValue)
       return result
     }

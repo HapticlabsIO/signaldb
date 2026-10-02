@@ -46,6 +46,13 @@ describe('getMatchingKeys', () => {
     expect(result.exclude).toBeNull()
   })
 
+  it('should return no matching keys if the selector field is an empty $in expression', () => {
+    const result = getMatchingKeys('name', { name: { $in: [] } })
+
+    expect(result.include).toEqual([])
+    expect(result.exclude).toBeNull()
+  })
+
   it('should return an array of matching keys if the selector field is a single negated value', () => {
     const field = 'name'
     const selector = { name: { $ne: 'John' } }
@@ -64,5 +71,12 @@ describe('getMatchingKeys', () => {
 
     expect(result.include).toBeNull()
     expect(result.exclude).toEqual(['John', 'Jane'])
+  })
+
+  it('should not optimize an empty $nin expression', () => {
+    const result = getMatchingKeys('name', { name: { $nin: [] } })
+
+    expect(result.include).toBeNull()
+    expect(result.exclude).toBeNull()
   })
 })
