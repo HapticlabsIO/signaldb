@@ -391,6 +391,41 @@ describe('SignalDBHistory', () => {
     })
   })
 
+  it('should call onCommit once the batched step is recorded and the batch is unregistered', () => {
+    collection.insert({ id: 1, value: 'a', status: 'draft' })
+    let historyLengthOnCommit: number | undefined
+    const onCommit = vi.fn(() => {
+      historyLengthOnCommit = history['history'].length
+    })
+
+    const batch = registeredCollection.startBatch(1, ['value'], onCommit)
+    collection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+
+    expect(onCommit).not.toHaveBeenCalled()
+
+    batch.commitAndUnregister()
+
+    expect(onCommit).toHaveBeenCalledTimes(1)
+    // The insert and the batched update are recorded
+    expect(historyLengthOnCommit).toBe(2)
+    // The item can be batched again
+    expect(registeredCollection.startBatch(1, ['value'])).not.toBe(batch)
+  })
+
+  it('should ignore onCommit when the item already has a batch', () => {
+    collection.insert({ id: 1, value: 'a', status: 'draft' })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const ignoredOnCommit = vi.fn()
+
+    const batch = registeredCollection.startBatch(1, ['value'])
+    const secondBatch = registeredCollection.startBatch(1, ['value'], ignoredOnCommit)
+    batch.commitAndUnregister()
+
+    expect(secondBatch).toBe(batch)
+    expect(ignoredOnCommit).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
   it('should record history after doPaused is finished', () => {
     collection.insert(item)
     history.doPaused(() => {
