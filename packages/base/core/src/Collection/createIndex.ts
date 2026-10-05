@@ -25,7 +25,7 @@ export function createExternalIndex<T extends BaseItem<I> = BaseItem, I = any>(
       const fieldSelector = (selector as Record<string, any>)[field]
       const filteresForNull = fieldSelector == null || fieldSelector.$exists === false
       const keys = filteresForNull
-        ? { include: null, exclude: [...index.keys()].filter(key => key != null) }
+        ? { include: null, exclude: [...index.keys()].filter(key => key != null), isExact: false }
         : getMatchingKeys<T, I>(field, selector)
       if (keys.include == null && keys.exclude == null) return { matched: false }
 
@@ -67,7 +67,7 @@ export function createExternalIndex<T extends BaseItem<I> = BaseItem, I = any>(
         matched: true,
         positions: includedPositions,
         fields: [field],
-        keepSelector: filteresForNull,
+        keepSelector: !keys.isExact,
       }
     },
     rebuild() {

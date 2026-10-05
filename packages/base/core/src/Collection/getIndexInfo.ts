@@ -95,34 +95,24 @@ export default function getIndexInfo<T extends BaseItem<I> = BaseItem, I = any>(
     }
     if ($andNew.length > 0) newSelector.$and = $andNew
   }
-  if (Array.isArray($or)) {
-    const $orNew = []
-    const matchedBefore = matched
-    const positionsBefore = positions
-    let hasNonIndexField = false
-    for (const sel of $or) {
-      const {
-        matched: selMatched,
-        positions: selPositions,
-        optimizedSelector,
-      } = getIndexInfo(indexProviders, sel)
-      if (selMatched) {
-        positions = [...new Set([...positions, ...selPositions])]
-        matched = true
-        if (Object.keys(optimizedSelector).length > 0) {
-          $orNew.push(optimizedSelector)
-        }
-      } else {
-        $orNew.push(sel)
-        hasNonIndexField = true
-      }
-    }
-    if ($orNew.length > 0) newSelector.$or = $orNew
+  if (Array.isArray($or) && $or.length > 0) {
+    const branchInfos = $or.map(sel => getIndexInfo(indexProviders, sel))
+    if (branchInfos.every(info => info.matched)) {
+      // An item matches an $or if it matches any of its branches, but only if it also matches
+      // everything else of the selector.
+      const orPositions = [...new Set(branchInfos.flatMap(info => info.positions))]
+      positions = matched ? intersection(positions, orPositions) : orPositions
+      matched = true
 
-    if (hasNonIndexField) { // if there was a non-indexed field, we can't optimize the $or away
+      // The conditions that are left over from a branch have to hold for the items of that branch
+      // only. That cannot be told after the positions of the branches were merged, so the
+      // branches are tested again as they are.
+      if (branchInfos.some(info => Object.keys(info.optimizedSelector).length > 0)) {
+        newSelector.$or = $or
+      }
+    } else {
+      // If there was a non-indexed field, we can't optimize the $or away
       newSelector.$or = $or
-      matched = matchedBefore
-      positions = positionsBefore
     }
   }
 

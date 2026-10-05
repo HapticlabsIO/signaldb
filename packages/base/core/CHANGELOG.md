@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * Introduced the `transformAll` option when creating a `Collection`. This allows you to define a function that transform items after they are retrieved from persistence, enabling the integration of data from other collections or external sources (thanks @signalize!)
 
+### Changed
+
+* Queries made inside of a `batch` after a write use the indices of the collection. Before, the indices were ignored until the batch ended, so that every such query tested every item of the collection. Stale indices are now rebuilt when a query needs them.
+* Inserting an item no longer searches the memory of the collection for it, and looking items up no longer copies the memory. Loading n items takes time proportional to n instead of n², and a lookup by id does not take time proportional to the size of the collection anymore.
+* A selector is compiled once per query. Before, it was compiled again for every item it was tested against, which made queries that test many items several times slower.
+* A query for an empty list of values (`{ field: { $in: [] } }`) on an indexed field finds nothing without testing any item. Before, the index did not serve it and every item was tested.
+
+### Fixed
+
+* A query that gave an indexed field more operators than the index serves, such as `{ age: { $in: [1, 2], $gt: 1 } }`, ignored the others. They are tested on the items that the index finds now.
+* A query with an `$or` returned wrong items when its branches had conditions that the indices do not serve, or when the selector had conditions next to the `$or`. The conditions of the whole selector are tested on the items that the indices find now.
+
 ## [1.7.2] - 2026-01-07
 
 ### Changed

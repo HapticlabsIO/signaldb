@@ -6,7 +6,7 @@ import type Selector from '../types/Selector'
 import type Modifier from '../types/Modifier'
 import type IndexProvider from '../types/IndexProvider'
 import type { LowLevelIndexProvider } from '../types/IndexProvider'
-import match from '../utils/match'
+import { createMatcher } from '../utils/match'
 import modify from '../utils/modify'
 import isEqual from '../utils/isEqual'
 import randomId from '../utils/randomId'
@@ -196,9 +196,9 @@ export default class Collection<
 
   /**
    * Executes a batch operation, allowing multiple modifications to the collection
-   * while deferring index rebuilding until all operations in the batch are completed.
-   * This improves performance by avoiding repetitive index recalculations and
-   * provides atomicity for the batch of operations.
+   * while deferring index rebuilding until a query needs the indices or all operations in the
+   * batch are completed. This improves performance by avoiding repetitive index recalculations
+   * and provides atomicity for the batch of operations.
    * @param callback - The batch operation to execute.
    * @returns The result of the batch operation callback.
    */
@@ -216,7 +216,8 @@ export default class Collection<
       // Rebuild indices after the last nested batch operation completes
       if (Collection.staticBatchOperationsInProgress === 0) {
         try {
-          // rebuild indices as they are not rebuilt during batch operations
+          // rebuild the indices that were not rebuilt since the last write, as writes in a
+          // batch only rebuild them once a query needs them
           Collection.collections.forEach(
             collection => collection.indicesOutdated ? collection.rebuildAllIndices() : null)
 
@@ -325,8 +326,7 @@ export default class Collection<
             }
 
             // item does not exists yet; normal insert
-            this.memory().push(item)
-            const itemIndex = this.memory().findIndex(document => document === item)
+            const itemIndex = this.appendToMemory(item)
             this.idIndex.set(serializeValue(item.id), new Set([itemIndex]))
           })
           changes.modified.forEach((item) => {
@@ -571,23 +571,22 @@ export default class Collection<
     }
 
     if (this.indicesOutdated) {
-      return {
-        matched: false,
-        positions: [],
-        optimizedSelector: selector,
-      }
+      // Writes made in a batch leave the indices stale. Rebuilding them for the query is
+      // cheaper than testing every item against the selector, which is what ignoring them costs.
+      this.rebuildAllIndices()
     }
 
     return getIndexInfo(this.indexProviders, selector)
   }
 
   private getItemAndIndex(selector: Selector<T>) {
-    const memory = this.memoryArray()
+    const memory = this.memoryItems()
     const indexInfo = this.getIndexInfo(selector)
     const items = indexInfo.matched
       ? indexInfo.positions.map(index => memory[index])
       : memory
-    const item = items.find(document => match(document, selector))
+    const matchesSelector = createMatcher(selector)
+    const item = items.find(document => matchesSelector(document))
     const foundInIndex = indexInfo.matched
       && indexInfo.positions.find(itemIndex => memory[itemIndex] === item)
     const index = foundInIndex
@@ -617,6 +616,31 @@ export default class Collection<
     return this.memory().map(item => item)
   }
 
+  /**
+   * Provides the items in the order they are stored in, to look them up by position. If the memory
+   * is an array, these are the stored items and not a copy of them, so they must not be modified.
+   * @returns The items of the collection.
+   */
+  private memoryItems(): readonly T[] {
+    const memory = this.memory()
+    return Array.isArray(memory) ? memory : this.memoryArray()
+  }
+
+  /**
+   * Appends an item to the memory.
+   * @param item - The item to append.
+   * @returns The position of the item in the memory.
+   */
+  private appendToMemory(item: T) {
+    const memory = this.memory()
+    memory.push(item)
+    // An array appends at its end, so only other memories have to be searched for the item, which
+    // takes time proportional to the number of items. That made loading n items take n² steps.
+    return Array.isArray(memory)
+      ? memory.length - 1
+      : memory.findIndex(document => document === item)
+  }
+
   private transform(item: E): U {
     if (!this.options.transform) return item as unknown as U
     return this.options.transform(item)
@@ -631,19 +655,20 @@ export default class Collection<
     return this.profile(
       () => {
         const indexInfo = this.getIndexInfo(selector)
-        const matchItems = (item: T) => {
-          if (indexInfo.optimizedSelector == null) return true // if no selector is given, return all items
-          if (Object.keys(indexInfo.optimizedSelector).length <= 0) return true // if selector is empty, return all items
-          const matches = match(item, indexInfo.optimizedSelector)
-          return matches
-        }
+        const { optimizedSelector } = indexInfo
+        // if no selector is given or the selector is empty, return all items
+        const matchItems = optimizedSelector == null || Object.keys(optimizedSelector).length <= 0
+          ? () => true
+          : createMatcher(optimizedSelector)
 
         this.emit('getItems', selector)
-        const memory = this.memoryArray()
+        const memory = this.memoryItems()
 
         // no index available, use complete memory
         if (!indexInfo.matched) {
-          if (isEqual(selector, {})) return memory
+          // the items are handed out to callers that change the collection while they use them,
+          // so they must not be the stored ones
+          if (isEqual(selector, {})) return [...memory]
           return memory.filter(matchItems)
         }
 
@@ -762,8 +787,7 @@ export default class Collection<
     this.emit('validate', newItem)
     if (this.idIndex.has(serializeValue(newItem.id))) throw new Error('Item with same id already exists')
     this.emit('added.before', newItem)
-    this.memory().push(newItem)
-    const itemIndex = this.memory().findIndex(document => document === newItem)
+    const itemIndex = this.appendToMemory(newItem)
     this.idIndex.set(serializeValue(newItem.id), new Set([itemIndex]))
     this.rebuildIndices()
     this.emit('added', newItem)

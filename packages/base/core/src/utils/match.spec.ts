@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import match from './match'
+import match, { createMatcher } from './match'
 
 describe('match', () => {
   it('should match an item that satisfies the selector', () => {
@@ -53,5 +53,32 @@ describe('match', () => {
     expect(match({ name: undefined }, { name: { $ne: undefined } })).toBe(false)
     expect(match({ name: undefined as null | undefined }, { name: { $ne: null } })).toBe(false)
     expect(match({ name: undefined as null | undefined }, { name: null })).toBe(true)
+  })
+})
+
+describe('createMatcher', () => {
+  it('should test every item against the selector', () => {
+    const matchesAdults = createMatcher<{ age: number }>({ age: { $gte: 18 } })
+
+    expect([{ age: 17 }, { age: 18 }, { age: 40 }].map(item => matchesAdults(item)))
+      .toEqual([false, true, true])
+  })
+
+  it('should give the same answers as match', () => {
+    const selector = { $or: [{ name: 'John' }, { age: { $lt: 20 } }] }
+    const matchesSelector = createMatcher<{ name: string, age: number }>(selector)
+
+    for (const item of [{ name: 'John', age: 30 }, { name: 'Jane', age: 30 }, { name: 'Jane', age: 10 }]) {
+      expect(matchesSelector(item)).toBe(match(item, selector))
+    }
+  })
+
+  it('should not compile the selector before an item is tested', () => {
+    // mingo refuses an unknown operator when it compiles the selector
+    // @ts-expect-error - the selector uses an operator that does not exist
+    const matches = createMatcher<{ age: number }>({ age: { $unknownOperator: 1 } })
+
+    expect(matches).toBeTypeOf('function')
+    expect(() => matches({ age: 1 })).toThrowError('unknown query operator $unknownOperator')
   })
 })

@@ -690,19 +690,19 @@ describe('Collection', () => {
 
       // create items
       col.batch(() => {
-        for (let i = 0; i < 1000; i += 1) {
+        for (let i = 0; i < 10_000; i += 1) {
           col.insert({ id: i.toString(), name: 'John', num: i })
         }
       })
 
       const idQueryTime = measureTime(() => {
-        const item = col.findOne({ id: '999' })
-        expect(item).toEqual({ id: '999', name: 'John', num: 999 })
+        const item = col.findOne({ id: '9999' })
+        expect(item).toEqual({ id: '9999', name: 'John', num: 9999 })
       })
 
       const nonIdQueryTime = measureTime(() => {
-        const item = col.findOne({ num: 999 })
-        expect(item).toEqual({ id: '999', name: 'John', num: 999 })
+        const item = col.findOne({ num: 9999 })
+        expect(item).toEqual({ id: '9999', name: 'John', num: 9999 })
       })
 
       const percentage = (100 / nonIdQueryTime) * idQueryTime
@@ -721,20 +721,20 @@ describe('Collection', () => {
 
       Collection.batch(() => {
         // create items
-        for (let i = 0; i < 10_000; i += 1) {
+        for (let i = 0; i < 50_000; i += 1) {
           col1.insert({ id: i.toString(), name: 'John', num: i })
           col2.insert({ id: i.toString(), name: 'John', num: i })
         }
       })
 
       const indexQueryTime = measureTime(() => {
-        const item = col1.findOne({ num: 999 })
-        expect(item).toEqual({ id: '999', name: 'John', num: 999 })
+        const item = col1.findOne({ num: 49_999 })
+        expect(item).toEqual({ id: '49999', name: 'John', num: 49_999 })
       })
 
       const nonIndexQueryTime = measureTime(() => {
-        const item = col2.findOne({ num: 999 })
-        expect(item).toEqual({ id: '999', name: 'John', num: 999 })
+        const item = col2.findOne({ num: 49_999 })
+        expect(item).toEqual({ id: '49999', name: 'John', num: 49_999 })
       })
 
       const percentage = (100 / nonIndexQueryTime) * indexQueryTime
@@ -997,7 +997,7 @@ describe('Collection', () => {
       expect(col.findOne({ id: '1' })).toEqual({ id: '1', name: 'John' })
     })
 
-    it('should disable indexing temporarily if indices are outdated', () => {
+    it('should rebuild outdated indices when a query needs them', () => {
       const col = new Collection<{ id: string, name: string }>({
         indices: [createIndex('name')],
       })
