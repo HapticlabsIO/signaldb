@@ -438,6 +438,97 @@ describe('SignalDBHistory', () => {
     expect(collection.findOne({ id: 1 })?.value).toBe('a')
   })
 
+  it('should leave the columns a step did not change to whoever changed them since', () => {
+    collection.insert({ ...item, status: 'first' })
+    collection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    history.doPaused(() => {
+      collection.updateOne({ id: 1 }, { $set: { status: 'changed elsewhere' } })
+    })
+
+    history.undo()
+    expect(collection.findOne({ id: 1 })).toEqual({
+      id: 1,
+      value: 'a',
+      status: 'changed elsewhere',
+    })
+
+    history.redo()
+    expect(collection.findOne({ id: 1 })).toEqual({
+      id: 1,
+      value: 'b',
+      status: 'changed elsewhere',
+    })
+  })
+
+  it('should leave the columns a batched step did not change to whoever changed them since', () => {
+    collection.insert({ ...item, status: 'first' })
+    const batch = registeredCollection.startBatch(1, ['value'])
+    collection.updateOne({ id: 1 }, { $set: { value: 'b' } })
+    collection.updateOne({ id: 1 }, { $set: { value: 'c' } })
+    batch.commitAndUnregister()
+    history.doPaused(() => {
+      collection.updateOne({ id: 1 }, { $set: { status: 'changed elsewhere' } })
+    })
+
+    history.undo()
+
+    expect(collection.findOne({ id: 1 })).toEqual({
+      id: 1,
+      value: 'a',
+      status: 'changed elsewhere',
+    })
+  })
+
+  it('should take back a column that a step added', () => {
+    collection.insert(item)
+    collection.updateOne({ id: 1 }, { $set: { status: 'added' } })
+
+    history.undo()
+
+    expect(collection.findOne({ id: 1 })?.status).toBeUndefined()
+  })
+
+  it('should undo the removal of an item that came back by other means', () => {
+    collection.insert(item)
+    collection.removeOne({ id: 1 })
+    history.doPaused(() => {
+      collection.insert({ ...item, value: 'brought back' })
+    })
+
+    expect(() => history.undo()).not.toThrow()
+
+    expect(collection.findOne({ id: 1 })?.value).toBe('brought back')
+  })
+
+  it('should undo all of a step if an item it removed came back by other means', () => {
+    collection.insert(item)
+    collection.insert({ id: 2, value: 'b' })
+    Collection.batch(() => {
+      collection.removeOne({ id: 1 })
+      collection.removeOne({ id: 2 })
+    })
+    history.doPaused(() => {
+      collection.insert({ id: 2, value: 'brought back' })
+    })
+
+    history.undo()
+
+    expect(collection.findOne({ id: 1 })?.value).toBe('a')
+    expect(collection.findOne({ id: 2 })?.value).toBe('brought back')
+  })
+
+  it('should redo an insert of an item that came back by other means', () => {
+    collection.insert(item)
+    history.undo()
+    history.doPaused(() => {
+      collection.insert({ ...item, value: 'brought back' })
+    })
+
+    expect(() => history.redo()).not.toThrow()
+
+    expect(collection.findOne({ id: 1 })?.value).toBe('brought back')
+  })
+
   it('should record history after doPausedAsync is finished', async () => {
     collection.insert(item)
     await history.doPausedAsync(async () => {
