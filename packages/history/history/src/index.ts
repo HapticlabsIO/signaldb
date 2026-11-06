@@ -10,6 +10,17 @@ interface UndoRedoable {
   backward(): void,
 }
 
+/**
+ * @param item An item.
+ * @param columns The names of some of its columns.
+ * @returns What the item holds in them, also if that is nothing.
+ */
+function pickColumns(item: object, columns: string[]): Record<string, unknown> {
+  return Object.fromEntries(
+    columns.map(column => [column, Reflect.get(item, column)]),
+  )
+}
+
 class InsertOperation<T extends BaseItem<I>, I> implements UndoRedoable {
   private item: T
 
@@ -22,6 +33,10 @@ class InsertOperation<T extends BaseItem<I>, I> implements UndoRedoable {
   }
 
   public forward(): void {
+    const selector = { id: this.item.id } as Selector<T>
+    // Someone else can have brought the item back, as it was or changed since,
+    // and their version is left alone
+    if (this.collection.findOne(selector, { reactive: false })) return
     this.collection.insert({ ...this.item, ...this.overrides() })
   }
 
@@ -36,8 +51,9 @@ class UpdateOperation<
   T extends BaseItem<I> = BaseItem,
   I = any,
 > implements UndoRedoable {
-  private before: T
-  private after: T
+  private id: I
+  private before: Record<string, unknown>
+  private after: Record<string, unknown>
 
   public constructor(
     before: T,
@@ -45,18 +61,24 @@ class UpdateOperation<
     private collection: Collection<T, I, any>,
     private overrides: () => Partial<T> = () => ({}),
   ) {
-    this.before = { ...before }
-    this.after = { ...after }
+    this.id = before.id
+    // Only what the step changed: anything else can change until it is undone,
+    // and that is not the step's to take back
+    const changedColumns = Object.keys({ ...before, ...after }).filter(
+      column => !isEqual(Reflect.get(before, column), Reflect.get(after, column)),
+    )
+    this.before = pickColumns(before, changedColumns)
+    this.after = pickColumns(after, changedColumns)
   }
 
   public forward(): void {
-    this.collection.updateOne({ id: this.before.id } as Selector<T>, {
+    this.collection.updateOne({ id: this.id } as Selector<T>, {
       $set: { ...this.after, ...this.overrides() },
     })
   }
 
   public backward(): void {
-    this.collection.updateOne({ id: this.after.id } as Selector<T>, {
+    this.collection.updateOne({ id: this.id } as Selector<T>, {
       $set: { ...this.before, ...this.overrides() },
     })
   }
